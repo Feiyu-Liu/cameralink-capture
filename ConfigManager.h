@@ -35,6 +35,8 @@ public:
     bool getPauseView() const { return m_pauseView; }
     int getRecordFrame() const { return m_recordFrame; }
     bool getIsRoundFramerate() const { return m_isRoundFramerate; }
+    int getTriigerMode() const { return m_triigerMode; }
+    int getBufferOverflow() const { return m_bufferOverflow; }
 
 private:
     ConfigManager() = default;
@@ -66,4 +68,6 @@ private:
     bool m_pauseView;
     int m_recordFrame;
     bool m_isRoundFramerate;
+    int m_triigerMode;
+	int m_bufferOverflow;
 };

@@ -24,9 +24,6 @@
     <ClCompile Include="RealtimeView.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="Tets.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="RecordFromBuffer.cpp">
       <Filter>源文件</Filter>
     </ClCompile>

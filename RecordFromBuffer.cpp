@@ -64,6 +64,7 @@ bool RecordFromBuffer::SaveVideo(const std::string& filename, int codec, double 
 	return true;
 }
 
+// 保存帧序列图像
 bool RecordFromBuffer::SaveFrames(const std::string& fileFolder, const std::vector<int>& idxArr) {
 
 	int imageConter = 1;
@@ -78,6 +79,7 @@ bool RecordFromBuffer::SaveFrames(const std::string& fileFolder, const std::vect
 	return true;
 }
 
+// 不设置码率
 bool RecordFromBuffer::_InitVideoWriter(const std::string& filename, int codec, double fps, const cv::Size& frameSize, bool isColor)
 {
 	_videoWriter.open(filename, codec, fps, frameSize, isColor);

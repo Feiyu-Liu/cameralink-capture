@@ -142,7 +142,6 @@
     <ClInclude Include="config.h" />
     <ClInclude Include="ConfigManager.h" />
     <ClInclude Include="RealtimeView.h" />
-    <ClCompile Include="Tets.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="SaperaSDK\Lib\Win64\SapClassBasic.lib" />

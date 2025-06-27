@@ -51,7 +51,9 @@ bool ConfigManager::loadConfig(const std::string& iniPath) {
     m_pauseView = GetPrivateProfileIntA("Record", "PauseView", 1, iniPath.c_str()) != 0;
     m_recordFrame = GetPrivateProfileIntA("Record", "RecordFrame", 600, iniPath.c_str());
     
-    
+	m_triigerMode = GetPrivateProfileIntA("Record", "TriigerMode", 0, iniPath.c_str());
+
+    m_bufferOverflow = GetPrivateProfileIntA("Record", "BufferOverflow", 5, iniPath.c_str());
     return true;
 }
 

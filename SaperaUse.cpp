@@ -90,7 +90,7 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
         Buffers->SetCount(CONFIG.getBufferCount());
     }
     else if (CONFIG.getRecordMode() == 2) { // 固定时长录制
-        Buffers->SetCount(CONFIG.getRecordFrame()+5);
+        Buffers->SetCount(CONFIG.getRecordFrame()+CONFIG.getBufferOverflow());
         std::cout << "预估录制时长(s)：" << CONFIG.getRecordFrame() / CONFIG.getFrameRate() << std::endl;
     }
     
@@ -112,31 +112,6 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     
     /*实例化非流式录制器*/
     RecordFromBuffer *bufferRecorder = new RecordFromBuffer(Buffers);
-
-
-    SOCKET serverSocket, clientSocket;
-    sockaddr_in clientAddr;
-    int clientAddrSize = sizeof(clientAddr);
-    char buffer[1024];
-    int recvLen;
-
-    // 初始化连接，监听端口 12345
-    serverSocket = this->initializeConnection("127.0.0.1", 12345);
-    if (serverSocket == INVALID_SOCKET) {
-        return 1;
-    }
-
-    // 接受客户端连接
-    clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
-    if (clientSocket == INVALID_SOCKET) {
-        std::cerr << "Accept failed!" << std::endl;
-        closesocket(serverSocket);
-        WSACleanup();
-        return 1;
-    }
-
-    std::cout << "Client connected!" << std::endl;
-
 
 
     /* 创建对象 */
@@ -190,7 +165,7 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     frameCounter += (bufferCount - lastIdx) + thisIdx;
                 }
                 lastIdx = thisIdx;
-                // std::cout << frameCounter << std::endl;
+                //std::cout << frameCounter << std::endl;
             }
             // 监控 buffer 满时暂停捕获
             Xfer->Freeze();
@@ -294,23 +269,34 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     Pro->keyControler = 1; // 显示信息
                     break;
                 case 'r': case 'R':
-                    if (CONFIG.getRecordMode() == 1) {
-                        Pro->keyControler = 2; // 开始流式录制
+                    if (CONFIG.getRecordMode() == 1) {  // 开始流式录制
+                        Pro->keyControler = 2; 
                         break;
                     } else if (CONFIG.getRecordMode() == 2 && !_monitorRecording) { // 开始非流式录制
-                        recBeginBufferIdx = Buffers->GetIndex();
-                        if (!Xfer->IsGrabbing()) {
-                            std::cout << "\n\n未开始录制，请开启画面捕获\n\n" << std::endl;
-                            break;
-                        };
-                        _monitorRecording = true;
-                        // Buffers->Clear(); // 清除所有缓冲区的内容
+                        int triggerMode = CONFIG.getTriigerMode();
+                        if (triggerMode == 0) { // 键盘触发
+                            recBeginBufferIdx = Buffers->GetIndex();
+                            if (!Xfer->IsGrabbing()) {
+                                std::cout << "\n\n未开始录制，请开启画面捕获\n\n" << std::endl;
+                                break;
+                            };
+                            _monitorRecording = true;
+                            std::cout << "\n\n开始非流式录制\n\n" << std::endl;
+                        } else if (triggerMode == 1) { // TTL触发
+                            if (Xfer->IsGrabbing()) {
+                               Xfer->Freeze();
+                            };
+                            // 设置触发
+                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, 0,0);
+                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT, CONFIG.getRecordFrame()+CONFIG.getBufferOverflow(), 1);
+                            std::cout << "等待Trigger...\n" << std::endl;
+
+                            recBeginBufferIdx = Buffers->GetIndex();
+                            _monitorRecording = true;
+                            // std::cout << "\n\n开始非流式录制\n\n" << std::endl;
+
+                        }
                         
-                        std::cout << "\n\n开始非流式录制\n\n" << std::endl;
-                        // 重置索引
-                        //
-                        
-                        // Xfer->Grab();
                         break;
                     }
                 case 's': case 'S':
@@ -388,51 +374,6 @@ void SaperaUse::ProCallback(SapProCallbackInfo* pInfo)
     */
 }
 
-
-SOCKET SaperaUse::initializeConnection(const std::string& ip, int port) {
-    WSADATA wsaData;
-    SOCKET serverSocket;
-    sockaddr_in serverAddr;
-
-    // 初始化 Winsock
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "WSAStartup failed!" << std::endl;
-        return INVALID_SOCKET;
-    }
-
-    // 创建套接字
-    serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (serverSocket == INVALID_SOCKET) {
-        std::cerr << "Socket creation failed!" << std::endl;
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    // 设置服务器地址
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());  // 将IP字符串转换为网络字节顺序的地址
-    serverAddr.sin_port = htons(port);                    // 设置端口号
-
-    // 绑定套接字到指定端口
-    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        std::cerr << "Bind failed!" << std::endl;
-        closesocket(serverSocket);
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    // 监听客户端连接
-    if (listen(serverSocket, 1) == SOCKET_ERROR) {
-        std::cerr << "Listen failed!" << std::endl;
-        closesocket(serverSocket);
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    std::cout << "Server is listening on " << ip << ":" << port << std::endl;
-
-    return serverSocket;
-}
 
 /* PRIVATE */
 

@@ -7,10 +7,10 @@
 
 // 编码器映射
 inline int GetEncoder(const std::string& encoderName) {
-    if (encoderName == "H264") return cv::VideoWriter::fourcc('H', '2', '6', '4');
-    if (encoderName == "HEVC") return cv::VideoWriter::fourcc('H', 'E', 'V', '1');
-    if (encoderName == "MJPG") return cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
-    if (encoderName == "YUYV") return cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V');
+    if (encoderName == "H264") return cv::VideoWriter::fourcc('H', '2', '6', '4'); // MP4
+    if (encoderName == "HEVC") return cv::VideoWriter::fourcc('H', 'E', 'V', '1'); // 无法持续写入
+    if (encoderName == "MJPG") return cv::VideoWriter::fourcc('M', 'J', 'P', 'G'); // avi
+    if (encoderName == "YUYV") return cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V'); 
     if (encoderName == "AZPR") return cv::VideoWriter::fourcc('A', 'Z', 'P', 'R');
     return cv::VideoWriter::fourcc('H', '2', '6', '4'); // 默认使用H264
 }
