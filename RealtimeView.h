@@ -14,7 +14,6 @@
 #include <iostream>
 
 #include "config.h"
-#include "AsyncVideoWriter.h"
 
 //#include "VideoRecorder.h"
 

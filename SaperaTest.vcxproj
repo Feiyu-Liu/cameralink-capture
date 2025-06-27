@@ -134,13 +134,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="AsyncVideoWriter.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="opencvTest.cpp" />
     <ClCompile Include="RecordFromBuffer.cpp" />
     <ClCompile Include="SaperaUse.cpp" />
     <ClCompile Include="RealtimeView.cpp" />
-    <ClInclude Include="AsyncVideoWriter.h" />
     <ClInclude Include="config.h" />
     <ClInclude Include="RealtimeView.h" />
     <ClCompile Include="Tets.cpp" />

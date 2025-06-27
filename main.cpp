@@ -9,7 +9,9 @@ int main()
 {
     std::cout << "正在初始化\n";
     s.GrabbersInit();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     std::cout << "初始化完成，按任意键开始\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     while (1) {
         if (_kbhit() != 0) {  //如果键盘被敲击
             break;

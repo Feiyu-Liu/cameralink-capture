@@ -7,7 +7,7 @@ SaperaUse::SaperaUse()
 
 SaperaUse::~SaperaUse()
 {
-    // 退出相机的时候记得写
+    // 退出相机
 }
 
 
@@ -104,15 +104,13 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
 
     /*实时处理层*/
     RealtimeView* Pro = new RealtimeView(Buffers, ProCallback, NULL);
-    //VideoRecorder* Rec = new VideoRecorder(Buffers, ProCallback2, this);
 
     /*SapTransfer类实现了管理通用传输过程功能，即从一个源节点向目标节点传输数据的操作。
     所有继承自SapXferNode类的以下类都被视为传输节点：
     */
     SapTransfer* Xfer = new SapAcqToBuf(Acq, Buffers, this->XferCallback, Pro);
-    //SapTransfer* Xfer2 = new SapAcqToBuf(Acq, Buffers, this->XferCallback2, Rec);
-
-
+    
+    /*实例化非流式录制器*/
     RecordFromBuffer *bufferRecorder = new RecordFromBuffer(Buffers);
 
 
@@ -133,113 +131,143 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
         this->_errorStaus = 6; // fail to creat process
         return false;
     }
-
-    //if (!Rec->Create()) {
-    //    this->_errorStaus = 7; // fail to creat process
-    //    return false;
-    //}
-
     if (Xfer && !Xfer->Create()) {
         this->_errorStaus = 4; // fail to creat Xfer
         return false;
     }
-    //if (Xfer2 && !Xfer2->Create()) {
-    //    this->_errorStaus = 4; // fail to creat Xfer
-   //     return false;
-    //}
 
-    //if (Rec->AutoSetVideoParams("D:\\Batlab\\videos\\test11.mp4", Xfer2)) {
-    //    std::cout << "ok\n";
-     //   if (Rec->InitVideoRecorder()) {
-    //        std::cout << "ok\n";
-    //    }
-    //}
 
 
     // Start continous grab
-    //Xfer2->Grab();
     Xfer->Grab();
-    //Xfer2->Grab();
     
-    SapXferFrameRateInfo* pFrameRateInfo = Xfer->GetFrameRateStatistics();
+    SapXferFrameRateInfo* pFrameRateInfo = Xfer->GetFrameRateStatistics(); // 获取帧率信息
     float frameRate = 0;
     float thisframeRate = 0;
     bool isQuit = false;
+    int recBeginBufferIdx = 0;
     while (1) {
-        // 固定帧数录制模式下监控 buffer 满时暂停流传输
-        if (_monitorRecording && RECORD_MODE == 2) {
-            //std::cout << Buffers->GetIndex() << std::endl;
-            if (Buffers->GetIndex() > RECORD_FRAME) {
-                Xfer->Freeze();
-                _monitorRecording = false;
-                if (!Xfer->Wait(5000)) {
-                    printf("Grab could not stop properly.\n");
-                }
-                std::cout << "暂停捕获: " << Buffers->GetIndex() << std::endl;
 
-                std::stringstream ss;
-                ss << SAVE_PATH << VIDEO_FILE_NAME;
-                std::string filePath = ss.str();
-                bool isSaved = bufferRecorder->SaveVideo(filePath, ENCODER, FRAME_RATE, 
-                    Buffers->GetWidth(), Buffers->GetHeight(), false, Buffers->GetIndex());
-                if (isSaved) {
-                    std::cout << "视频已保存至: " << filePath << std::endl;
+        // 非流式录制模式
+        if (_monitorRecording && RECORD_MODE == 2) {
+            int bufferCount = Buffers->GetCount() - 1;
+            
+
+            int frameCounter = 0;
+            int thisIdx;
+            int lastIdx = recBeginBufferIdx;
+            while (frameCounter <= RECORD_FRAME) {
+                thisIdx = Buffers->GetIndex();
+                if (thisIdx >= lastIdx) {
+                    frameCounter += thisIdx-lastIdx;
+                } else {
+                    frameCounter += (bufferCount - lastIdx) + thisIdx;
+                }
+                lastIdx = thisIdx;
+                std::cout << frameCounter << std::endl;
+            }
+            // 监控 buffer 满时暂停捕获
+            Xfer->Freeze();
+            if (!Xfer->Wait(5000)) {
+                printf("Grab could not stop properly.\n");
+            }
+            _monitorRecording = false;
+            std::cout << "结束录制，暂停捕获" << std::endl;
+            // 构建idx数组
+            int bufferIdx[RECORD_FRAME];
+            bufferIdx[0] = recBeginBufferIdx;
+            for (int m = 1; m < RECORD_FRAME; m++) {
+                if (bufferIdx[m - 1] == bufferCount) {
+                    bufferIdx[m] = 0;
                 }
                 else {
-                    std::cout << "视频保存失败" << std::endl;
+                    bufferIdx[m] = bufferIdx[m - 1] + 1;
                 }
             }
+            int arrSize = sizeof(bufferIdx) / sizeof(bufferIdx[0]);  // 计算数组大小
+            // 将buffer中的帧写入到视频
+            std::stringstream ss;
+            // 获取当前时间
+            std::time_t t = std::time(0);
+            struct tm now;
+            localtime_s(&now, &t);
+
+            ss << SAVE_PATH << std::put_time(&now, "%Y%m%dT%H%M%S") << VIDEO_EXT;
+            std::string filePath = ss.str();
+
+            try {
+                std::cout << "正在保存视频..."  << std::endl;
+                bufferRecorder->SaveVideo(filePath, ENCODER, FRAME_RATE,
+                    Buffers->GetWidth(), Buffers->GetHeight(), false, bufferIdx, arrSize);
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                std::cout << "视频已保存至: " << filePath << std::endl;
+                Xfer->Grab();
+            }
+            catch (const std::exception& e) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                std::cerr << "视频保存失败: " << e.what() << std::endl;
+                Xfer->Grab();
+            }
+            
         }
 
-        
         if (pFrameRateInfo->IsLiveFrameRateAvailable()) {
             if (!pFrameRateInfo->IsLiveFrameRateStalled()) {
-                // 帧率四舍五入
-                if (IS_ROUND_FRAMERATE) {
+                if (IS_ROUND_FRAMERATE) { // 帧率四舍五入
                     thisframeRate = round(pFrameRateInfo->GetLiveFrameRate());
                 }
                 else {
                     thisframeRate = pFrameRateInfo->GetLiveFrameRate();
                 }
-                
                 if (thisframeRate != frameRate) {
                     std::cout << "实时帧率：" << thisframeRate << std::endl;
                 }
-
                 frameRate = thisframeRate;
             }
         }
 
-        if (_kbhit() != 0) {  //如果键盘被敲击
+        if (_kbhit() != 0) {  //监测键盘事件
             char k = _getch();
             switch (k) {
-                case 'q':
+                case 'q': case 'Q':
                     isQuit = 1;
                     break;
-                case 'g':
+                case 'g': case 'G':
                     Xfer->Grab();
                     std::cout << "\n\n开始捕获\n\n" << std::endl;
                     break;
-                case 'p':
+                case 'p': case 'P':
                     Xfer->Freeze();
                     std::cout << "\n\n暂停捕获\n\n" << std::endl;
                     break;
-                case 'i':
+                case 'i': case 'I':
                     Pro->keyControler = 1; // 显示信息
                     break;
-                case 'r':
-
-                    //Pro->keyControler = 2; // 开始录制
-                    _monitorRecording = true;
-                    Buffers->ResetIndex(); // 重置索引
-                    Buffers->SetIndex(0);
-
-                    Xfer->Grab();
-                    
-                    break;
-                case 's':
-                    Pro->keyControler = 3; // 停止录制
-                    std::cout << "\n\n停止录制\n\n" << std::endl;
+                case 'r': case 'R':
+                    if (RECORD_MODE == 1) {
+                        Pro->keyControler = 2; // 开始流式录制
+                        break;
+                    } else if (RECORD_MODE == 2 && !_monitorRecording) { // 开始非流式录制
+                        recBeginBufferIdx = Buffers->GetIndex();
+                        if (!Xfer->IsGrabbing()) {
+                            std::cout << "\n\n未开始录制，请开启画面捕获\n\n" << std::endl;
+                            break;
+                        };
+                        _monitorRecording = true;
+                        // Buffers->Clear(); // 清除所有缓冲区的内容
+                        
+                        std::cout << "\n\n开始非流式录制\n\n" << std::endl;
+                        // 重置索引
+                        //
+                        
+                        // Xfer->Grab();
+                        break;
+                    }
+                case 's': case 'S':
+                    if (RECORD_MODE == 1) {
+                        Pro->keyControler = 3; // 停止录制
+                        break;
+                    }
                     break;
                 default:
                     break;
@@ -259,7 +287,6 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     if (!Xfer->Wait(5000)) {
         printf("Grab could not stop properly.\n");
     }
-
     //unregister the acquisition callback
     Acq->UnregisterCallback();
 
@@ -291,16 +318,6 @@ void SaperaUse::XferCallback(SapXferCallbackInfo* pInfo)
     
 }
 
-void SaperaUse::XferCallback2(SapXferCallbackInfo* pInfo)
-{
-    VideoRecorder* mRec = (VideoRecorder*)pInfo->GetContext();
-    //mPro->Execute();
-    if (mRec->IsRecording()) {
-        mRec->ExecuteNext();
-    }
-    
-}
-
 void SaperaUse::ProCallback(SapProCallbackInfo* pInfo)
 {
     //SapView* mView = (SapView*)pInfo->GetContext();
@@ -320,22 +337,6 @@ void SaperaUse::ProCallback(SapProCallbackInfo* pInfo)
     */
 }
 
-
-void SaperaUse::ProCallback2(SapProCallbackInfo* pInfo)
-{
-    VideoRecorder* mRec = (VideoRecorder*)pInfo->GetContext();
-    if (_kbhit() != 0) //如果键盘被敲击
-    {
-        char k = _getch();
-        if (k == 'r')
-        {
-            mRec->StartRecording();
-        }
-        else if (k == 's') {
-            mRec->StopRecording();
-        }
-    }
-}
 
 /* PRIVATE */
 

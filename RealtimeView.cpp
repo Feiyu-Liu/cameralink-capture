@@ -31,30 +31,34 @@ BOOL RealtimeView::Run()
 				break;
 			case 2:
 				if (!_isRecording) {
-					if (RECORD_MODE == 1) {
-
-					}
-					else if (RECORD_MODE == 2) {
-						
+					if (!SAVE_AS_FRAME_SEQUENCE) { // 录制视频
 						std::stringstream ss;
 						ss << SAVE_PATH << VIDEO_FILE_NAME;
 						std::string filePath = ss.str();
 
 						cv::Size frameSize(_imageWidth, _imageHeight);
 						_isRecording = _InitVideoWriter(filePath, ENCODER, FRAME_RATE, frameSize, false);
-						// _imageConter = 1;
-						std::cout << "\n\n开始录制\n\n" << std::endl;
+							
+						std::cout << "\n\n开始流式录制\n\n" << std::endl;
 						return TRUE;
 					}
-					
-					
+					else { // 录制序列帧
+						_isRecording = true;
+						_imageConter = 1;
+
+						std::cout << "\n\n开始流式录制(保存为序列帧)\n\n" << std::endl;
+						return TRUE;
+					}
 				}
 				keyControler = 0;
                 break;
 			case 3:
-				_ReleaseVideoWriter();
+				if (!SAVE_AS_FRAME_SEQUENCE) { // 录制视频
+                    _ReleaseVideoWriter();
+				}
 				_isRecording = false;
 				keyControler = 0;
+				std::cout << "\n\n停止流式录制\n" << "已保存至：" << SAVE_PATH << std::endl;
 				break;
 			default:
 				break;
@@ -76,31 +80,19 @@ BOOL RealtimeView::Run()
 	}
 	*/
 	if (_isRecording) {
-		std::cout << proIndex << std::endl;
-		if (RECORD_MODE == 2) {
-			if (proIndex > RECORD_FRAME) {
-				_isRecording = false;
-				_ReleaseVideoWriter();
-				std::cout << "\n\n停止录制\n\n" << std::endl;
-				return TRUE;
-			}
-			cv::Mat image(_imageHeight, _imageWidth, CV_8UC1, outAddress);
+		if (!SAVE_AS_FRAME_SEQUENCE) {
+			cv::Mat image(_imageHeight, _imageWidth, CV_PIXEL_FORMAT, outAddress);
 			_WriteFrame(image);
-
-			/*
+		}
+		else {
 			std::stringstream ss;
 			ss << SAVE_PATH << std::setw(4) << std::setfill('0') << _imageConter << ".bmp";
 			std::string filePath = ss.str();
-
 			// std::cout << proIndex << std::endl;
-			std::cout << "Saving image to " << filePath << std::endl;
-
-			// m_pBuffers->Save(filePath.c_str(), "-format bmp", proIndex, 1);
+			// std::cout << "Saving image to " << filePath << std::endl;
+			m_pBuffers->Save(filePath.c_str(), "-format bmp", proIndex, 1);
 			_imageConter += 1;
-			*/
 		}
-		
-
 	}
 
 
@@ -110,46 +102,43 @@ BOOL RealtimeView::Run()
 	else { // 实时预览
 		_imageWidth = m_pBuffers->GetWidth();
 		_imageHeight = m_pBuffers->GetHeight();
-		cv::Mat image(_imageHeight, _imageWidth, CV_8UC1, outAddress);
+		cv::Mat image(_imageHeight, _imageWidth, CV_PIXEL_FORMAT, outAddress);
 
 		if (FOCUS_PEAKING_LAYER || HIST_LAYER || MOTION_DETECTOR_LAYER) {
-			cv::cvtColor(image, image, cv::COLOR_GRAY2BGR); // 颜色格式转换，以便叠加显示
-			this->_lastFrame = image; // 保存上一帧图像
-		}
+			cv::Mat viewImage;
+			cv::cvtColor(image, viewImage, cv::COLOR_GRAY2BGR); // 颜色格式转换，以便叠加显示
+			if (FOCUS_PEAKING_LAYER) {
+				cv::Mat focusPeakingLayer = _FocusPeakingLayer(image); // 峰值对焦图层
+				cv::add(viewImage, focusPeakingLayer, viewImage);
+			}
 
-		if (FOCUS_PEAKING_LAYER) {
-			cv::Mat image = _FocusPeakingLayer(image); // 峰值对焦图层
-		}
-		else if (HIST_LAYER) {
-			cv::Mat image = _HistLayer(image); // 直方图图层
-		}
-		else if (MOTION_DETECTOR_LAYER) {
-			bool isMotionDetected;
-			cv::Mat image = _MotionDetectorLayer(isMotionDetected, this->_lastFrame, image, false, 3000); // 运动检测图层
-			// std::cout << isMotionDetected << std::endl;
-			
-		}
-		/*
-		cv::Mat viewImage;
-		cv::cvtColor(image, viewImage, cv::COLOR_GRAY2BGR); // 颜色格式转换，以便叠加显示
-		cv::Mat viewImage2;
-		cv::add(viewImage, hisLayer, viewImage2);
-		cv::Mat viewImage3;
-		cv::add(viewImage2, motionLayer, viewImage3);
-		cv::Mat viewImage4;
-		cv::add(viewImage3, focusPeakingLayer, viewImage4);
-		*/
-		
-		// cv::Mat scaledImage;
-		if (VIEWER_SCALE != 1) {
-			cv::resize(image, image, cv::Size(image.cols* VIEWER_SCALE, image.rows* VIEWER_SCALE)); // scale 
-		}
-		
+			if (HIST_LAYER) {
+				cv::Mat hisLayer = _HistLayer(image); // 直方图图层
+				cv::add(viewImage, hisLayer, viewImage);
+			}
 
-		cv::imshow("Captured Frame", image);
-		cv::waitKey(CV_WAITKEY);
-		
-		return TRUE;
+			if (MOTION_DETECTOR_LAYER) {
+				bool isMotionDetected;
+				cv::Mat motionLayer = _MotionDetectorLayer(isMotionDetected, this->_lastFrame, image, false, 3000); // 运动检测图层
+				cv::add(viewImage, motionLayer, viewImage);
+				this->_lastFrame = image; // 保存上一帧图像
+				// std::cout << isMotionDetected << std::endl;
+			}
+
+			if (VIEWER_SCALE != 1) {
+				cv::resize(viewImage, viewImage, cv::Size(image.cols * VIEWER_SCALE, image.rows * VIEWER_SCALE)); // scale 
+			}
+			cv::imshow("Captured Frame", viewImage);
+			cv::waitKey(CV_WAITKEY);
+			return TRUE;
+		} else {
+			if (VIEWER_SCALE != 1) {
+				cv::resize(image, image, cv::Size(image.cols * VIEWER_SCALE, image.rows * VIEWER_SCALE)); // scale 
+			}
+			cv::imshow("Captured Frame", image);
+			cv::waitKey(CV_WAITKEY);
+			return TRUE;
+		}
 	}
 	
 }
@@ -253,7 +242,7 @@ cv::Mat RealtimeView::_FocusPeakingLayer(const cv::Mat& frame)
 /* 直方图显示*/
 cv::Mat RealtimeView::_HistLayer(const cv::Mat& frame)
 {
-	// 这些参数要在类中定义
+	// 参数定义
 	int grayImgNum = 1; //图像数
 	int grayChannels = 0; //需要计算的通道号 单通道只有0
 	const int grayHistDim = 1; //直方图维数

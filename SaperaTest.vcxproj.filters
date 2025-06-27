@@ -24,16 +24,10 @@
     <ClCompile Include="RealtimeView.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="opencvTest.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="VideoRecorder.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Tets.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="AsyncVideoWriter.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="RecordFromBuffer.cpp">
@@ -55,9 +49,6 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="config.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="AsyncVideoWriter.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="RecordFromBuffer.h">
