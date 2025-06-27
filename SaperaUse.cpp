@@ -363,7 +363,7 @@ void SaperaUse::_KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfe
             frameCounter += (bufferCount - lastIdx) + thisIdx;
         }
         lastIdx = thisIdx;
-        std::cout << frameCounter << std::endl;
+        // std::cout << frameCounter << std::endl;
     }
     // ¼à¿Ø buffer ÂúÊ±ÔÝÍ£²¶»ñ
     Xfer->Freeze();

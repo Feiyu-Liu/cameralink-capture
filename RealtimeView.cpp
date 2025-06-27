@@ -93,6 +93,7 @@ BOOL RealtimeView::Run()
 		_WriteFrame(image);
 	}
 	*/
+	// Á÷Ê½Â¼ÖÆ
 	if (_isRecording) {
 		if (!CONFIG.getSaveAsFrameSequence()) {
 			cv::Mat image(_imageHeight, _imageWidth, CONFIG.getCvPixelFormat(), outAddress);

@@ -71,8 +71,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>C:\LiuFeiyu\opencv\build\include;C:\LiuFeiyu\opencv\build\include\opencv2;.\SaperaSDK\Include\Basic;.\SaperaSDK\Include;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\LiuFeiyu\SaperaTest\SaperaTest\SaperaSDK\Lib\Win64\VS2019;C:\LiuFeiyu\opencv\build\x64\vc16\lib;C:\LiuFeiyu\SaperaTest\SaperaTest\SaperaSDK\Lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>.\opencv\build\include;.\opencv\build\include\opencv2;$(IncludePath)</IncludePath>
+    <LibraryPath>.\opencv\build\x64\vc16\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -84,6 +84,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>.\SaperaSDK\Lib\Win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -108,13 +109,13 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SAPERADIR)\Include;$(SAPERADIR)\Classes\Basic;$(SAPERADIR)\Classes\Gui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.\SaperaSDK\Common;.\SaperaSDK\Basic;.\SaperaSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>opencv_world481d.lib;SapClassBasic.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>C:\LiuFeiyu\SaperaTest\SaperaTest\SaperaSDK\Lib\Win64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>opencv_world481d.lib;.\SaperaSDK\Lib\Win64\SapClassBasic.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -145,7 +146,6 @@
   </ItemGroup>
   <ItemGroup>
     <Library Include="SaperaSDK\Lib\Win64\SapClassBasic.lib" />
-    <Library Include="SaperaSDK\Lib\Win64\VS2019\SapClassGui.lib" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="RecordFromBuffer.h" />

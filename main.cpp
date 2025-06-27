@@ -7,7 +7,7 @@
 SaperaUse cam;
 int main()
 {
-    if (!ConfigManager::getInstance().loadConfig("C:\\Users\\Administrator\\Desktop\\MyBasler\\config\\config_cam2.ini")) {
+    if (!ConfigManager::getInstance().loadConfig("C:\\Users\\BatLabWS\\Desktop\\MyBasler\\config\\config_cam2.ini")) {
         std::cout << "ini配置文件加载失败\n";
         return -1;
     }

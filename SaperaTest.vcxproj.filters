@@ -33,7 +33,6 @@
   </ItemGroup>
   <ItemGroup>
     <Library Include="SaperaSDK\Lib\Win64\SapClassBasic.lib" />
-    <Library Include="SaperaSDK\Lib\Win64\VS2019\SapClassGui.lib" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="SaperaUse.h">
