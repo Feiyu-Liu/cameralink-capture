@@ -31,18 +31,32 @@ BOOL RealtimeView::Run()
 				break;
 			case 2:
 				if (!_isRecording) {
-					if (!SAVE_AS_FRAME_SEQUENCE) { // 录制视频
-						std::stringstream ss;
-						ss << SAVE_PATH << VIDEO_FILE_NAME;
-						std::string filePath = ss.str();
+					// 构建视频文件名
+					std::stringstream ss;
+					std::time_t t = std::time(0);
+					struct tm now;
+					localtime_s(&now, &t);
+					ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
+					std::string filePath = ss.str();
 
+					if (!CONFIG.getSaveAsFrameSequence()) { // 录制视频
+					
 						cv::Size frameSize(_imageWidth, _imageHeight);
-						_isRecording = _InitVideoWriter(filePath, ENCODER, FRAME_RATE, frameSize, false);
+						_isRecording = _InitVideoWriter(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(), frameSize, false);
 							
 						std::cout << "\n\n开始流式录制\n\n" << std::endl;
 						return TRUE;
 					}
 					else { // 录制序列帧
+						_FrameSaveFolder = filePath.erase(filePath.length() - 4, 4);
+
+						if (CreateDirectory(_FrameSaveFolder.c_str(), NULL)) {
+							_FrameSaveFolder.append("\\\\");
+						}
+						else {
+							std::cerr << "Failed to create directory. Error: " << GetLastError() << std::endl;
+						}
+
 						_isRecording = true;
 						_imageConter = 1;
 
@@ -53,12 +67,12 @@ BOOL RealtimeView::Run()
 				keyControler = 0;
                 break;
 			case 3:
-				if (!SAVE_AS_FRAME_SEQUENCE) { // 录制视频
+				if (!CONFIG.getSaveAsFrameSequence()) { // 录制视频
                     _ReleaseVideoWriter();
 				}
 				_isRecording = false;
 				keyControler = 0;
-				std::cout << "\n\n停止流式录制\n" << "已保存至：" << SAVE_PATH << std::endl;
+				std::cout << "\n\n停止流式录制\n" << "已保存至：" << CONFIG.getSavePath() << std::endl;
 				break;
 			default:
 				break;
@@ -80,44 +94,43 @@ BOOL RealtimeView::Run()
 	}
 	*/
 	if (_isRecording) {
-		if (!SAVE_AS_FRAME_SEQUENCE) {
-			cv::Mat image(_imageHeight, _imageWidth, CV_PIXEL_FORMAT, outAddress);
+		if (!CONFIG.getSaveAsFrameSequence()) {
+			cv::Mat image(_imageHeight, _imageWidth, CONFIG.getCvPixelFormat(), outAddress);
 			_WriteFrame(image);
 		}
 		else {
 			std::stringstream ss;
-			ss << SAVE_PATH << std::setw(4) << std::setfill('0') << _imageConter << ".bmp";
+			ss << _FrameSaveFolder << std::setw(4) << std::setfill('0') << _imageConter << ".bmp";
 			std::string filePath = ss.str();
-			// std::cout << proIndex << std::endl;
-			// std::cout << "Saving image to " << filePath << std::endl;
 			m_pBuffers->Save(filePath.c_str(), "-format bmp", proIndex, 1);
 			_imageConter += 1;
 		}
 	}
 
 
-	if (_isRecording && PAUSE_VIEW) { // 录制时不显示画面
+	if (_isRecording && CONFIG.getPauseView()) { // 录制时不显示画面
 		return TRUE;
 	}
 	else { // 实时预览
 		_imageWidth = m_pBuffers->GetWidth();
 		_imageHeight = m_pBuffers->GetHeight();
-		cv::Mat image(_imageHeight, _imageWidth, CV_PIXEL_FORMAT, outAddress);
+		float scale = CONFIG.getViewerScale();
+		cv::Mat image(_imageHeight, _imageWidth, GetCvFormat(CONFIG.getCvPixelFormat()), outAddress);
 
-		if (FOCUS_PEAKING_LAYER || HIST_LAYER || MOTION_DETECTOR_LAYER) {
+		if (CONFIG.getFocusPeakingLayer() || CONFIG.getHistLayer() || CONFIG.getMotionDetectorLayer()) {
 			cv::Mat viewImage;
 			cv::cvtColor(image, viewImage, cv::COLOR_GRAY2BGR); // 颜色格式转换，以便叠加显示
-			if (FOCUS_PEAKING_LAYER) {
+			if (CONFIG.getFocusPeakingLayer()) {
 				cv::Mat focusPeakingLayer = _FocusPeakingLayer(image); // 峰值对焦图层
 				cv::add(viewImage, focusPeakingLayer, viewImage);
 			}
 
-			if (HIST_LAYER) {
+			if (CONFIG.getHistLayer()) {
 				cv::Mat hisLayer = _HistLayer(image); // 直方图图层
 				cv::add(viewImage, hisLayer, viewImage);
 			}
 
-			if (MOTION_DETECTOR_LAYER) {
+			if (CONFIG.getMotionDetectorLayer()) {
 				bool isMotionDetected;
 				cv::Mat motionLayer = _MotionDetectorLayer(isMotionDetected, this->_lastFrame, image, false, 3000); // 运动检测图层
 				cv::add(viewImage, motionLayer, viewImage);
@@ -125,18 +138,18 @@ BOOL RealtimeView::Run()
 				// std::cout << isMotionDetected << std::endl;
 			}
 
-			if (VIEWER_SCALE != 1) {
-				cv::resize(viewImage, viewImage, cv::Size(image.cols * VIEWER_SCALE, image.rows * VIEWER_SCALE)); // scale 
+			if (scale != 1) {
+				cv::resize(viewImage, viewImage, cv::Size(image.cols * scale, image.rows * scale)); // scale 
 			}
 			cv::imshow("Captured Frame", viewImage);
-			cv::waitKey(CV_WAITKEY);
+			cv::waitKey(CONFIG.getCvWaitKey());
 			return TRUE;
 		} else {
-			if (VIEWER_SCALE != 1) {
-				cv::resize(image, image, cv::Size(image.cols * VIEWER_SCALE, image.rows * VIEWER_SCALE)); // scale 
+			if (scale != 1) {
+				cv::resize(image, image, cv::Size(image.cols * scale, image.rows * scale)); // scale 
 			}
 			cv::imshow("Captured Frame", image);
-			cv::waitKey(CV_WAITKEY);
+			cv::waitKey(CONFIG.getCvWaitKey());
 			return TRUE;
 		}
 	}
@@ -192,7 +205,7 @@ void RealtimeView::_ReleaseVideoWriter() {
 void RealtimeView::_BufferInfoDisplay() {
 
 	int width = m_pBuffers->GetWidth();
-	std::cout << "宽度：" << width << std::endl;
+	std::cout << "\n\n宽度：" << width << std::endl;
 
 	int height = m_pBuffers->GetHeight();
 	std::cout << "高度：" << height << std::endl;

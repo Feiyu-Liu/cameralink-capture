@@ -86,12 +86,12 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
      它还可以用作源传输节点，允许将数据从一个缓冲区资源转移到另一个缓冲区
     */ 
     SapBufferWithTrash* Buffers = new SapBufferWithTrash(2, Acq);
-    if (RECORD_MODE == 1) { // 自由录制
-        Buffers->SetCount(BUFFER_COUNT);
+    if (CONFIG.getRecordMode() == 1) { // 自由录制
+        Buffers->SetCount(CONFIG.getBufferCount());
     }
-    else if (RECORD_MODE == 2) { // 固定时长录制
-        Buffers->SetCount(RECORD_FRAME+5);
-        std::cout << "预估录制时长：" << RECORD_FRAME/FRAME_RATE << std::endl;
+    else if (CONFIG.getRecordMode() == 2) { // 固定时长录制
+        Buffers->SetCount(CONFIG.getRecordFrame()+5);
+        std::cout << "预估录制时长(s)：" << CONFIG.getRecordFrame() / CONFIG.getFrameRate() << std::endl;
     }
     
     /*SapView类包括在窗口中显示SapBuffer对象资源的功能。它允许您显示当前缓冲区资源、
@@ -112,6 +112,31 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     
     /*实例化非流式录制器*/
     RecordFromBuffer *bufferRecorder = new RecordFromBuffer(Buffers);
+
+
+    SOCKET serverSocket, clientSocket;
+    sockaddr_in clientAddr;
+    int clientAddrSize = sizeof(clientAddr);
+    char buffer[1024];
+    int recvLen;
+
+    // 初始化连接，监听端口 12345
+    serverSocket = this->initializeConnection("127.0.0.1", 12345);
+    if (serverSocket == INVALID_SOCKET) {
+        return 1;
+    }
+
+    // 接受客户端连接
+    clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
+    if (clientSocket == INVALID_SOCKET) {
+        std::cerr << "Accept failed!" << std::endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    std::cout << "Client connected!" << std::endl;
+
 
 
     /* 创建对象 */
@@ -149,14 +174,15 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     while (1) {
 
         // 非流式录制模式
-        if (_monitorRecording && RECORD_MODE == 2) {
-            int bufferCount = Buffers->GetCount() - 1;
-            
-
-            int frameCounter = 0;
+        if (_monitorRecording && CONFIG.getRecordMode() == 2) {
+            int totalFrame = CONFIG.getRecordFrame();  // 总帧数
+            int bufferCount = Buffers->GetCount() - 1; // 最后的缓冲区索引
+           
+            // 帧计数器
+            int frameCounter = 0; 
             int thisIdx;
             int lastIdx = recBeginBufferIdx;
-            while (frameCounter <= RECORD_FRAME) {
+            while (frameCounter <= totalFrame) {
                 thisIdx = Buffers->GetIndex();
                 if (thisIdx >= lastIdx) {
                     frameCounter += thisIdx-lastIdx;
@@ -164,7 +190,7 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     frameCounter += (bufferCount - lastIdx) + thisIdx;
                 }
                 lastIdx = thisIdx;
-                std::cout << frameCounter << std::endl;
+                // std::cout << frameCounter << std::endl;
             }
             // 监控 buffer 满时暂停捕获
             Xfer->Freeze();
@@ -173,10 +199,10 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
             }
             _monitorRecording = false;
             std::cout << "结束录制，暂停捕获" << std::endl;
-            // 构建idx数组
-            int bufferIdx[RECORD_FRAME];
+            // 构建idx数组，传入给录制器
+            std::vector<int> bufferIdx(totalFrame);
             bufferIdx[0] = recBeginBufferIdx;
-            for (int m = 1; m < RECORD_FRAME; m++) {
+            for (int m = 1; m < totalFrame; m++) {
                 if (bufferIdx[m - 1] == bufferCount) {
                     bufferIdx[m] = 0;
                 }
@@ -184,7 +210,6 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     bufferIdx[m] = bufferIdx[m - 1] + 1;
                 }
             }
-            int arrSize = sizeof(bufferIdx) / sizeof(bufferIdx[0]);  // 计算数组大小
             // 将buffer中的帧写入到视频
             std::stringstream ss;
             // 获取当前时间
@@ -192,20 +217,39 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
             struct tm now;
             localtime_s(&now, &t);
 
-            ss << SAVE_PATH << std::put_time(&now, "%Y%m%dT%H%M%S") << VIDEO_EXT;
+            ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
             std::string filePath = ss.str();
 
             try {
-                std::cout << "正在保存视频..."  << std::endl;
-                bufferRecorder->SaveVideo(filePath, ENCODER, FRAME_RATE,
-                    Buffers->GetWidth(), Buffers->GetHeight(), false, bufferIdx, arrSize);
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                std::cout << "视频已保存至: " << filePath << std::endl;
+                if (!CONFIG.getSaveAsFrameSequence()) {
+                    std::cout << "正在保存视频..." << std::endl;
+                    bufferRecorder->SaveVideo(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(),
+                        Buffers->GetWidth(), Buffers->GetHeight(), false, bufferIdx);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    std::cout << "视频已保存至: " << filePath << std::endl;
+                    
+                }
+                else {
+                    std::cout << "正在保存视频帧..." << std::endl;
+                    
+                    std::string fileFolder = filePath.erase(filePath.length() - 4, 4);
+
+                    if (CreateDirectory(fileFolder.c_str(), NULL)) {
+                        fileFolder.append("\\\\");
+                    }
+                    else {
+                        std::cerr << "Failed to create directory. Error: " << GetLastError() << std::endl;
+                    }
+                   
+                    bufferRecorder->SaveFrames(fileFolder, bufferIdx);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    std::cout << "视频帧已保存至: " << fileFolder << std::endl;
+                }
                 Xfer->Grab();
             }
             catch (const std::exception& e) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                std::cerr << "视频保存失败: " << e.what() << std::endl;
+                std::cerr << "保存失败: " << e.what() << std::endl;
                 Xfer->Grab();
             }
             
@@ -213,7 +257,7 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
 
         if (pFrameRateInfo->IsLiveFrameRateAvailable()) {
             if (!pFrameRateInfo->IsLiveFrameRateStalled()) {
-                if (IS_ROUND_FRAMERATE) { // 帧率四舍五入
+                if (CONFIG.getIsRoundFramerate()) { // 帧率四舍五入
                     thisframeRate = round(pFrameRateInfo->GetLiveFrameRate());
                 }
                 else {
@@ -233,10 +277,16 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     isQuit = 1;
                     break;
                 case 'g': case 'G':
+                    if (Xfer->IsGrabbing()) {
+                        break;
+                    }
                     Xfer->Grab();
                     std::cout << "\n\n开始捕获\n\n" << std::endl;
                     break;
                 case 'p': case 'P':
+                    if (!Xfer->IsGrabbing()) {
+                        break;
+                    }
                     Xfer->Freeze();
                     std::cout << "\n\n暂停捕获\n\n" << std::endl;
                     break;
@@ -244,10 +294,10 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     Pro->keyControler = 1; // 显示信息
                     break;
                 case 'r': case 'R':
-                    if (RECORD_MODE == 1) {
+                    if (CONFIG.getRecordMode() == 1) {
                         Pro->keyControler = 2; // 开始流式录制
                         break;
-                    } else if (RECORD_MODE == 2 && !_monitorRecording) { // 开始非流式录制
+                    } else if (CONFIG.getRecordMode() == 2 && !_monitorRecording) { // 开始非流式录制
                         recBeginBufferIdx = Buffers->GetIndex();
                         if (!Xfer->IsGrabbing()) {
                             std::cout << "\n\n未开始录制，请开启画面捕获\n\n" << std::endl;
@@ -264,7 +314,7 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                         break;
                     }
                 case 's': case 'S':
-                    if (RECORD_MODE == 1) {
+                    if (CONFIG.getRecordMode() == 1) {
                         Pro->keyControler = 3; // 停止录制
                         break;
                     }
@@ -306,9 +356,10 @@ void SaperaUse::XferCallback(SapXferCallbackInfo* pInfo)
     // 执行pro进程（run方法在realtimeProcess中定义）Execute();FileName实时、ExecuteNext：非实时，依次读帧
     //mPro->Execute();
     //mPro->ExecuteNext();
-
     
-    if (mPro->IsRecording()) {
+    
+
+    if (mPro->IsRecording() && CONFIG.getExecuteNext()) {
         mPro->ExecuteNext();
     }
     else {
@@ -337,6 +388,51 @@ void SaperaUse::ProCallback(SapProCallbackInfo* pInfo)
     */
 }
 
+
+SOCKET SaperaUse::initializeConnection(const std::string& ip, int port) {
+    WSADATA wsaData;
+    SOCKET serverSocket;
+    sockaddr_in serverAddr;
+
+    // 初始化 Winsock
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed!" << std::endl;
+        return INVALID_SOCKET;
+    }
+
+    // 创建套接字
+    serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (serverSocket == INVALID_SOCKET) {
+        std::cerr << "Socket creation failed!" << std::endl;
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    // 设置服务器地址
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = inet_addr(ip.c_str());  // 将IP字符串转换为网络字节顺序的地址
+    serverAddr.sin_port = htons(port);                    // 设置端口号
+
+    // 绑定套接字到指定端口
+    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        std::cerr << "Bind failed!" << std::endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    // 监听客户端连接
+    if (listen(serverSocket, 1) == SOCKET_ERROR) {
+        std::cerr << "Listen failed!" << std::endl;
+        closesocket(serverSocket);
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    std::cout << "Server is listening on " << ip << ":" << port << std::endl;
+
+    return serverSocket;
+}
 
 /* PRIVATE */
 

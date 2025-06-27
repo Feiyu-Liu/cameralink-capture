@@ -52,6 +52,8 @@ private:
 	void _BufferInfoDisplay();
 
 	bool _isRecording = false;
+
+    std::string _FrameSaveFolder;
 	// std::string _videoSavePath = "C:\\LiuFeiyu\\videos\\12-10test1.mp4";
 
 	//Mat _FocusPeaking(const Mat& image, double threshold, const Scalar& color);

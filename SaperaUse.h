@@ -16,6 +16,8 @@
 #include <unordered_map>
 #include <cmath>
 
+#include <winsock2.h>
+
 #include "VideoRecorder.h"
 
 #include "config.h"
@@ -45,14 +47,14 @@ public:
 
     bool CreateDevice(int grabberIndex, int deviceIndex, const char* configFilePath);  // 初始化相机
 
-    bool ReleaseDevice(); // 释放相机
+    //bool ReleaseDevice(); // 释放相机
+    SOCKET initializeConnection(const std::string& ip, int port);
 
     // callback
     static void XferCallback(SapXferCallbackInfo* pInfo);  //transfer call back
-    static void XferCallback2(SapXferCallbackInfo* pInfo);
 
     static void ProCallback(SapProCallbackInfo* pInfo);  //process call back
-    static void ProCallback2(SapProCallbackInfo* pInfo);
+
 
 private:
 
@@ -66,7 +68,7 @@ private:
 
     bool _monitorRecording = false;
     // void
-    void _DestroyCameraObj();
+    // void _DestroyCameraObj();
 
 
 };

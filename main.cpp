@@ -4,11 +4,16 @@
 #include <iostream>
 #include "SaperaUse.h"
 
-SaperaUse s;
+SaperaUse cam;
 int main()
 {
+    if (!ConfigManager::getInstance().loadConfig("C:\\LiuFeiyu\\SaperaTest\\SaperaTest\\config.ini")) {
+        std::cout << "ini配置文件加载失败\n";
+        return -1;
+    }
+
     std::cout << "正在初始化\n";
-    s.GrabbersInit();
+    cam.GrabbersInit();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     std::cout << "初始化完成，按任意键开始\n";
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -19,9 +24,8 @@ int main()
     }
     std::cout << "正在加载画面\n";
 
-    const char* configPath = GRABBER_CONFIG_PATH;
 
-    s.CreateDevice(GRABBER_INDEX, CAMERA_INDEX, configPath);  // grabberIndex - deviceIndex - configFilePath
+    cam.CreateDevice(CONFIG.getGrabberIndex(), CONFIG.getCameraIndex(), CONFIG.getGrabberConfigPath().c_str());  // grabberIndex - deviceIndex - configFilePath
 }
 
 

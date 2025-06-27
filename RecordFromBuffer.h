@@ -24,7 +24,9 @@ public:
 
 
 	bool SaveVideo(const std::string& filename, int codec, double fps, int width, int height, bool isColor, int totalFrames);
-	bool SaveVideo(const std::string& filename, int codec, double fps, int width, int height, bool isColor, int* idxArr, int arrSize);
+	bool SaveVideo(const std::string& filename, int codec, double fps, int width, int height, bool isColor, const std::vector<int>& idxArr);
+
+	bool SaveFrames(const std::string& fileFolder, const std::vector<int>& idxArr);
 
 private:
 	cv::VideoWriter _videoWriter;

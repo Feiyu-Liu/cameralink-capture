@@ -24,13 +24,13 @@
     <ClCompile Include="RealtimeView.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="VideoRecorder.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="Tets.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="RecordFromBuffer.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="ConfigManager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
@@ -42,9 +42,6 @@
     <ClInclude Include="SaperaUse.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="VideoRecorder.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="RealtimeView.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -54,5 +51,13 @@
     <ClInclude Include="RecordFromBuffer.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="ConfigManager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="config.ini">
+      <Filter>资源文件</Filter>
+    </None>
   </ItemGroup>
 </Project>

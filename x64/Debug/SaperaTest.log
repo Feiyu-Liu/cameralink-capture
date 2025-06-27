@@ -1,7 +1,3 @@
-﻿  RecordFromBuffer.cpp
-  SaperaUse.cpp
-  正在生成代码...
-C:\LiuFeiyu\SaperaTest\SaperaTest\SaperaUse.cpp(299,1): warning C4715: “SaperaUse::CreateDevice”: 不是所有的控件路径都返回值
-C:\LiuFeiyu\SaperaTest\SaperaTest\RecordFromBuffer.cpp(38,1): warning C4715: “RecordFromBuffer::SaveVideo”: 不是所有的控件路径都返回值
-C:\LiuFeiyu\SaperaTest\SaperaTest\RecordFromBuffer.cpp(65,1): warning C4715: “RecordFromBuffer::SaveVideo”: 不是所有的控件路径都返回值
+﻿  SaperaUse.cpp
+C:\LiuFeiyu\SaperaTest\SaperaTest\SaperaUse.cpp(324,1): warning C4715: “SaperaUse::CreateDevice”: 不是所有的控件路径都返回值
   SaperaTest.vcxproj -> C:\LiuFeiyu\SaperaTest\x64\Debug\SaperaTest.exe

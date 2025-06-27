@@ -134,14 +134,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="ConfigManager.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="RecordFromBuffer.cpp" />
     <ClCompile Include="SaperaUse.cpp" />
     <ClCompile Include="RealtimeView.cpp" />
     <ClInclude Include="config.h" />
+    <ClInclude Include="ConfigManager.h" />
     <ClInclude Include="RealtimeView.h" />
     <ClCompile Include="Tets.cpp" />
-    <ClCompile Include="VideoRecorder.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="SaperaSDK\Lib\Win64\SapClassBasic.lib" />
@@ -150,7 +151,9 @@
   <ItemGroup>
     <ClInclude Include="RecordFromBuffer.h" />
     <ClInclude Include="SaperaUse.h" />
-    <ClInclude Include="VideoRecorder.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="config.ini" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
