@@ -66,7 +66,7 @@ private:
     CameraObj _cameraA;
 
 	void _KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfer, int beginBufferIdx);  // 键盘触发非流式录制
-    bool _TriggerToBufferRecord(SapBufferWithTrash* mBuffer);  // trigger触发非流式录制
+    bool _TriggerToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfer, SapAcquisition* Acq);  // trigger触发非流式录制
 
     bool _isKeyToRecording = false; // 监控非流式录制
     bool _isTriggerToRecording = false; // 监控非流式trigger录制

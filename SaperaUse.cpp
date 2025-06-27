@@ -150,7 +150,7 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
         
         // trigger非流式录制
         if (_isTriggerToRecording) {
-			bool res = _TriggerToBufferRecord(Buffers);
+			bool res = _TriggerToBufferRecord(Buffers, Xfer, Acq);
             if (!res) {
                 if (Xfer->IsGrabbing()) {
                     Xfer->Freeze();
@@ -234,10 +234,10 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                             }
                             // 设置触发
                             Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, CORACQ_VAL_EXT_TRIGGER_ON,1);
-                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_DETECTION, CORACQ_VAL_RISING_EDGE, 1);
-                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_LEVEL, CORACQ_VAL_LEVEL_TTL, 1);
+                            //Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_DETECTION, CORACQ_VAL_RISING_EDGE, 1);
+                            //Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_LEVEL, CORACQ_VAL_LEVEL_TTL, 1);
                             // Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_SOURCE, CORACQ_VAL_FRAME_COUNT_1, 1);
-							Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT, CONFIG.getRecordFrame()+CONFIG.getBufferOverflow(), 1);
+							//Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT, CONFIG.getRecordFrame()+CONFIG.getBufferOverflow(), 1);
 
                             Xfer->Grab(); // 开始采集
 
@@ -332,7 +332,6 @@ float SaperaUse::_FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo) {
             else {
                 thisframeRate = FrameRateInfo->GetLiveFrameRate();
             }
-
             if (thisframeRate != _SteadyFrameRate) {
                 std::cout << "实时帧率：" << thisframeRate << std::endl;
                 _SteadyFrameRate = thisframeRate; // 更新稳定帧率
@@ -366,6 +365,7 @@ void SaperaUse::_KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfe
         // std::cout << frameCounter << std::endl;
     }
     // 监控 buffer 满时暂停捕获
+    
     Xfer->Freeze();
     if (!Xfer->Wait(5000)) {
         printf("Grab could not stop properly.\n");
@@ -431,11 +431,17 @@ void SaperaUse::_KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfe
 }
 
 
-bool SaperaUse::_TriggerToBufferRecord(SapBufferWithTrash* mBuffer) {
+bool SaperaUse::_TriggerToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfer, SapAcquisition* Acq) {
     int beginBufferIdx = mBuffer->GetIndex(); // 获取当前缓冲区索引
     int totalFrame = CONFIG.getRecordFrame();  // 总帧数
     int bufferCount = mBuffer->GetCount() - 1; // 最后一个缓冲区索引
-    
+
+    // 如果没有grab打开grab
+    if (!Xfer->IsGrabbing()) {
+        // Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, CORACQ_VAL_EXT_TRIGGER_ON, 1); // 打开触发
+        Xfer->Grab(); // 开始采集
+    };
+
     // 等待触发
     std::cout << "\n等待Trigger\n（按's'键退出）" << std::endl;
     while (beginBufferIdx == mBuffer->GetIndex()) {
@@ -464,10 +470,16 @@ bool SaperaUse::_TriggerToBufferRecord(SapBufferWithTrash* mBuffer) {
             frameCounter += (bufferCount - lastIdx) + thisIdx;
         }
         lastIdx = thisIdx;
-        // std::cout << mBuffer->GetIndex() << std::endl;
+        
+        std::cout << frameCounter << std::endl;
     }
 
     // 监控 buffer 满时暂停捕获
+    Xfer->Freeze();
+    if (!Xfer->Wait(5000)) {
+        printf("Grab could not stop properly.\n");
+    }
+    // Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, CORACQ_VAL_EXT_TRIGGER_ON, 0); // 关闭触发
     std::cout << "结束录制" << std::endl;
 
     //// 录制
