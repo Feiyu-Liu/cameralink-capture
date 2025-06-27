@@ -137,121 +137,54 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     }
 
 
-
     // Start continous grab
     Xfer->Grab();
     
     SapXferFrameRateInfo* pFrameRateInfo = Xfer->GetFrameRateStatistics(); // 获取帧率信息
-    float frameRate = 0;
-    float thisframeRate = 0;
+
     bool isQuit = false;
     int recBeginBufferIdx = 0;
     while (1) {
+        // 帧率监测 
+        _FrameRateDisp(pFrameRateInfo);
+        
+        // trigger非流式录制
+        if (_isTriggerToRecording) {
+			bool res = _TriggerToBufferRecord(Buffers);
+            if (!res) {
+                if (Xfer->IsGrabbing()) {
+                    Xfer->Freeze();
+                };
+                if (!Xfer->Wait(5000)) {
+                    printf("Grab could not stop properly.\n");
+                }
+                // 关闭触发
+                Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, 1, 1);
 
-        // 非流式录制模式
-        if (_monitorRecording && CONFIG.getRecordMode() == 2) {
-            int totalFrame = CONFIG.getRecordFrame();  // 总帧数
-            int bufferCount = Buffers->GetCount() - 1; // 最后的缓冲区索引
-           
-            // 帧计数器
-            int frameCounter = 0; 
-            int thisIdx;
-            int lastIdx = recBeginBufferIdx;
-            while (frameCounter <= totalFrame) {
-                thisIdx = Buffers->GetIndex();
-                if (thisIdx >= lastIdx) {
-                    frameCounter += thisIdx-lastIdx;
-                } else {
-                    frameCounter += (bufferCount - lastIdx) + thisIdx;
-                }
-                lastIdx = thisIdx;
-                //std::cout << frameCounter << std::endl;
-            }
-            // 监控 buffer 满时暂停捕获
-            Xfer->Freeze();
-            if (!Xfer->Wait(5000)) {
-                printf("Grab could not stop properly.\n");
-            }
-            _monitorRecording = false;
-            std::cout << "结束录制，暂停捕获" << std::endl;
-            // 构建idx数组，传入给录制器
-            std::vector<int> bufferIdx(totalFrame);
-            bufferIdx[0] = recBeginBufferIdx;
-            for (int m = 1; m < totalFrame; m++) {
-                if (bufferIdx[m - 1] == bufferCount) {
-                    bufferIdx[m] = 0;
-                }
-                else {
-                    bufferIdx[m] = bufferIdx[m - 1] + 1;
-                }
-            }
-            // 将buffer中的帧写入到视频
-            std::stringstream ss;
-            // 获取当前时间
-            std::time_t t = std::time(0);
-            struct tm now;
-            localtime_s(&now, &t);
 
-            ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
-            std::string filePath = ss.str();
-
-            try {
-                if (!CONFIG.getSaveAsFrameSequence()) {
-                    std::cout << "正在保存视频..." << std::endl;
-                    bufferRecorder->SaveVideo(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(),
-                        Buffers->GetWidth(), Buffers->GetHeight(), false, bufferIdx);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                    std::cout << "视频已保存至: " << filePath << std::endl;
-                    
-                }
-                else {
-                    std::cout << "正在保存视频帧..." << std::endl;
-                    
-                    std::string fileFolder = filePath.erase(filePath.length() - 4, 4);
-
-                    if (CreateDirectory(fileFolder.c_str(), NULL)) {
-                        fileFolder.append("\\\\");
-                    }
-                    else {
-                        std::cerr << "Failed to create directory. Error: " << GetLastError() << std::endl;
-                    }
-                   
-                    bufferRecorder->SaveFrames(fileFolder, bufferIdx);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                    std::cout << "视频帧已保存至: " << fileFolder << std::endl;
-                }
+                // 继续捕获
                 Xfer->Grab();
-            }
-            catch (const std::exception& e) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                std::cerr << "保存失败: " << e.what() << std::endl;
-                Xfer->Grab();
-            }
-            
-        }
 
-        if (pFrameRateInfo->IsLiveFrameRateAvailable()) {
-            if (!pFrameRateInfo->IsLiveFrameRateStalled()) {
-                if (CONFIG.getIsRoundFramerate()) { // 帧率四舍五入
-                    thisframeRate = round(pFrameRateInfo->GetLiveFrameRate());
-                }
-                else {
-                    thisframeRate = pFrameRateInfo->GetLiveFrameRate();
-                }
-                if (thisframeRate != frameRate) {
-                    std::cout << "实时帧率：" << thisframeRate << std::endl;
-                }
-                frameRate = thisframeRate;
+                _isTriggerToRecording = false; // 结束录制
+
+                std::cout << "停止trigger录制" << std::endl;
+            }
+            else {
+                continue; // 跳过整个循环
             }
         }
 
-        if (_kbhit() != 0) {  //监测键盘事件
+        // 监测键盘事件
+        if (_kbhit() != 0) {  
             char k = _getch();
             switch (k) {
                 case 'q': case 'Q':
                     isQuit = 1;
                     break;
                 case 'g': case 'G':
+                    if (_isTriggerToRecording) {
+                        break;
+                    }
                     if (Xfer->IsGrabbing()) {
                         break;
                     }
@@ -259,6 +192,9 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     std::cout << "\n\n开始捕获\n\n" << std::endl;
                     break;
                 case 'p': case 'P':
+                    if (_isTriggerToRecording) {
+                        break;
+                    }
                     if (!Xfer->IsGrabbing()) {
                         break;
                     }
@@ -272,38 +208,53 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
                     if (CONFIG.getRecordMode() == 1) {  // 开始流式录制
                         Pro->keyControler = 2; 
                         break;
-                    } else if (CONFIG.getRecordMode() == 2 && !_monitorRecording) { // 开始非流式录制
+                    } else if (CONFIG.getRecordMode() == 2 && !_isKeyToRecording) { // 开始非流式录制
                         int triggerMode = CONFIG.getTriigerMode();
                         if (triggerMode == 0) { // 键盘触发
-                            recBeginBufferIdx = Buffers->GetIndex();
+                            recBeginBufferIdx = Buffers->GetIndex(); // 获取当前帧缓冲区索引
                             if (!Xfer->IsGrabbing()) {
                                 std::cout << "\n\n未开始录制，请开启画面捕获\n\n" << std::endl;
                                 break;
                             };
-                            _monitorRecording = true;
+                            _isKeyToRecording = true;
+
+                            // 显示信息
                             std::cout << "\n\n开始非流式录制\n\n" << std::endl;
-                        } else if (triggerMode == 1) { // TTL触发
+                            std::cout << "实时帧率：" << _SteadyFrameRate << "\n视频帧率：" << CONFIG.getFrameRate() << std::endl;
+
+                            // 开始录制
+                            _KeyToBufferRecord(Buffers, Xfer, recBeginBufferIdx); 
+
+                        } else if (triggerMode == 1 && !_isTriggerToRecording) { // TTL触发
                             if (Xfer->IsGrabbing()) {
                                Xfer->Freeze();
                             };
+                            if (!Xfer->Wait(5000)) {
+                                printf("Grab could not stop properly.\n");
+                            }
                             // 设置触发
-                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, 0,0);
-                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT, CONFIG.getRecordFrame()+CONFIG.getBufferOverflow(), 1);
-                            std::cout << "等待Trigger...\n" << std::endl;
+                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, CORACQ_VAL_EXT_TRIGGER_ON,1);
+                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_DETECTION, CORACQ_VAL_RISING_EDGE, 1);
+                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_LEVEL, CORACQ_VAL_LEVEL_TTL, 1);
+                            // Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_SOURCE, CORACQ_VAL_FRAME_COUNT_1, 1);
+							Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT, CONFIG.getRecordFrame()+CONFIG.getBufferOverflow(), 1);
 
-                            recBeginBufferIdx = Buffers->GetIndex();
-                            _monitorRecording = true;
-                            // std::cout << "\n\n开始非流式录制\n\n" << std::endl;
+                            Xfer->Grab(); // 开始采集
+
+                            _isTriggerToRecording = true;
+                            std::cout << "\n\n开始非流式录制\n\n" << std::endl;
+                            std::cout << "视频帧率：" << CONFIG.getFrameRate() << std::endl;
 
                         }
                         
                         break;
                     }
                 case 's': case 'S':
-                    if (CONFIG.getRecordMode() == 1) {
+                    if (CONFIG.getRecordMode() == 1) { // 流式录制
                         Pro->keyControler = 3; // 停止录制
                         break;
                     }
+
                     break;
                 default:
                     break;
@@ -338,12 +289,6 @@ void SaperaUse::XferCallback(SapXferCallbackInfo* pInfo)
 {
     // 获取sapProcess对象
     RealtimeView* mPro = (RealtimeView*)pInfo->GetContext();
-    
-    // 执行pro进程（run方法在realtimeProcess中定义）Execute();FileName实时、ExecuteNext：非实时，依次读帧
-    //mPro->Execute();
-    //mPro->ExecuteNext();
-    
-    
 
     if (mPro->IsRecording() && CONFIG.getExecuteNext()) {
         mPro->ExecuteNext();
@@ -377,3 +322,212 @@ void SaperaUse::ProCallback(SapProCallbackInfo* pInfo)
 
 /* PRIVATE */
 
+float SaperaUse::_FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo) {
+    float thisframeRate;
+    if (FrameRateInfo->IsLiveFrameRateAvailable()) {
+        if (!FrameRateInfo->IsLiveFrameRateStalled()) {
+            if (CONFIG.getIsRoundFramerate()) { // 帧率四舍五入
+                thisframeRate = round(FrameRateInfo->GetLiveFrameRate());
+            }
+            else {
+                thisframeRate = FrameRateInfo->GetLiveFrameRate();
+            }
+
+            if (thisframeRate != _SteadyFrameRate) {
+                std::cout << "实时帧率：" << thisframeRate << std::endl;
+                _SteadyFrameRate = thisframeRate; // 更新稳定帧率
+            }
+            return thisframeRate;
+        }
+    }
+    return _SteadyFrameRate;
+}
+
+void SaperaUse::_KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfer, int beginBufferIdx) {
+	// 实例化录制器
+    RecordFromBuffer* bufferRecorder = new RecordFromBuffer(mBuffer);
+
+    int totalFrame = CONFIG.getRecordFrame();  // 总帧数
+    int bufferCount = mBuffer->GetCount() - 1; // 最后一个缓冲区索引
+
+    // 帧计数器
+    int frameCounter = 0;
+    int thisIdx;
+    int lastIdx = beginBufferIdx;
+    while (frameCounter <= totalFrame) {
+        thisIdx = mBuffer->GetIndex();
+        if (thisIdx >= lastIdx) {
+            frameCounter += thisIdx - lastIdx;
+        }
+        else {
+            frameCounter += (bufferCount - lastIdx) + thisIdx;
+        }
+        lastIdx = thisIdx;
+        std::cout << frameCounter << std::endl;
+    }
+    // 监控 buffer 满时暂停捕获
+    Xfer->Freeze();
+    if (!Xfer->Wait(5000)) {
+        printf("Grab could not stop properly.\n");
+    }
+    _isKeyToRecording = false;
+    std::cout << "结束录制，暂停捕获" << std::endl;
+
+    // 构建idx数组，传入给录制器
+    std::vector<int> bufferIdx(totalFrame);
+    bufferIdx[0] = beginBufferIdx;
+    for (int m = 1; m < totalFrame; m++) {
+        if (bufferIdx[m - 1] == bufferCount) {
+            bufferIdx[m] = 0;
+        }
+        else {
+            bufferIdx[m] = bufferIdx[m - 1] + 1;
+        }
+    }
+
+    // 将buffer中的帧写入到视频
+    std::stringstream ss;
+    // 获取当前时间
+    std::time_t t = std::time(0);
+    struct tm now;
+    localtime_s(&now, &t);
+
+    ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
+    std::string filePath = ss.str();
+
+    try {
+        if (!CONFIG.getSaveAsFrameSequence()) { // 保存为视频
+            std::cout << "正在保存视频..." << std::endl;
+            bufferRecorder->SaveVideo(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(),
+                mBuffer->GetWidth(), mBuffer->GetHeight(), false, bufferIdx);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::cout << "视频已保存至: " << filePath << std::endl;
+
+        }
+        else { // 保存为帧序列
+            std::cout << "正在保存视频帧..." << std::endl;
+
+            std::string fileFolder = filePath.erase(filePath.length() - 4, 4);
+
+            if (CreateDirectory(fileFolder.c_str(), NULL)) {
+                fileFolder.append("\\\\");
+            }
+            else {
+                std::cerr << "创建文件夹失败: " << GetLastError() << std::endl;
+            }
+
+            bufferRecorder->SaveFrames(fileFolder, bufferIdx);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::cout << "视频帧已保存至: " << fileFolder << std::endl;
+        }
+        Xfer->Grab();
+    }
+    catch (const std::exception& e) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::cerr << "保存失败: " << e.what() << std::endl;
+        Xfer->Grab();
+    }
+
+}
+
+
+bool SaperaUse::_TriggerToBufferRecord(SapBufferWithTrash* mBuffer) {
+    int beginBufferIdx = mBuffer->GetIndex(); // 获取当前缓冲区索引
+    int totalFrame = CONFIG.getRecordFrame();  // 总帧数
+    int bufferCount = mBuffer->GetCount() - 1; // 最后一个缓冲区索引
+    
+    // 等待触发
+    std::cout << "\n等待Trigger\n（按's'键退出）" << std::endl;
+    while (beginBufferIdx == mBuffer->GetIndex()) {
+        // std::cout << mBuffer->GetIndex() << std::endl;
+        if (_kbhit() != 0) {
+            char k = _getch();
+            if (k == 's' || k == 'S') {
+
+                return false;
+            }
+        }
+    }
+    std::cout << "\n开始录制\n\n" << std::endl;
+
+	beginBufferIdx = beginBufferIdx + 1; // 跳过触发帧
+    // 帧计数器
+    int frameCounter = 0;
+    int thisIdx;
+    int lastIdx = beginBufferIdx;
+    while (frameCounter <= totalFrame) {
+        thisIdx = mBuffer->GetIndex();
+        if (thisIdx >= lastIdx) {
+            frameCounter += thisIdx - lastIdx;
+        }
+        else {
+            frameCounter += (bufferCount - lastIdx) + thisIdx;
+        }
+        lastIdx = thisIdx;
+        // std::cout << mBuffer->GetIndex() << std::endl;
+    }
+
+    // 监控 buffer 满时暂停捕获
+    std::cout << "结束录制" << std::endl;
+
+    //// 录制
+    // 实例化录制器
+    RecordFromBuffer* bufferRecorder = new RecordFromBuffer(mBuffer);
+
+    // 构建idx数组，传入给录制器
+    std::vector<int> bufferIdx(totalFrame);
+    bufferIdx[0] = beginBufferIdx;
+    for (int m = 1; m < totalFrame; m++) {
+        if (bufferIdx[m - 1] == bufferCount) {
+            bufferIdx[m] = 0;
+        }
+        else {
+            bufferIdx[m] = bufferIdx[m - 1] + 1;
+        }
+    }
+
+    // 将buffer中的帧写入到视频
+    std::stringstream ss;
+    // 获取当前时间
+    std::time_t t = std::time(0);
+    struct tm now;
+    localtime_s(&now, &t);
+
+    ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
+    std::string filePath = ss.str();
+
+    try {
+        if (!CONFIG.getSaveAsFrameSequence()) { // 保存为视频
+            std::cout << "正在保存视频..." << std::endl;
+            bufferRecorder->SaveVideo(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(),
+                mBuffer->GetWidth(), mBuffer->GetHeight(), false, bufferIdx);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::cout << "视频已保存至: " << filePath << std::endl;
+
+        }
+        else { // 保存为帧序列
+            std::cout << "正在保存视频帧..." << std::endl;
+
+            std::string fileFolder = filePath.erase(filePath.length() - 4, 4);
+
+            if (CreateDirectory(fileFolder.c_str(), NULL)) {
+                fileFolder.append("\\\\");
+            }
+            else {
+                std::cerr << "创建文件夹失败: " << GetLastError() << std::endl;
+            }
+
+            bufferRecorder->SaveFrames(fileFolder, bufferIdx);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::cout << "视频帧已保存至: " << fileFolder << std::endl;
+
+        }
+
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::cerr << "保存失败: " << e.what() << std::endl;
+        return false;
+    }
+}

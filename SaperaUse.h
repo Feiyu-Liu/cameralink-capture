@@ -59,10 +59,17 @@ private:
     /* GrabbersInit */
     int _availableGrabberCount = 0; // 可用的采集卡数
     std::vector<std::tuple<std::string, std::vector<std::string>>> _devicesInfo;  // 保存可用采集卡和可用设备名:1级：采集卡名称;2级：设备名称
+    
+	float _FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo);  // 显示实时帧率
+	float _SteadyFrameRate;  // 稳定帧率
 
     CameraObj _cameraA;
 
-    bool _monitorRecording = false;
+	void _KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfer, int beginBufferIdx);  // 键盘触发非流式录制
+    bool _TriggerToBufferRecord(SapBufferWithTrash* mBuffer);  // trigger触发非流式录制
+
+    bool _isKeyToRecording = false; // 监控非流式录制
+    bool _isTriggerToRecording = false; // 监控非流式trigger录制
     // void
     // void _DestroyCameraObj();
 
