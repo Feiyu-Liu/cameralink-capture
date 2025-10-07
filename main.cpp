@@ -3,11 +3,34 @@
 
 #include <iostream>
 #include "SaperaUse.h"
+#include <filesystem>
+#include <algorithm>
 
 SaperaUse cam;
+
+bool validateConfigFile(const std::string& inputPath, std::string& cleanedPath) {
+    cleanedPath = inputPath;
+
+    // 去除首尾空格
+    cleanedPath.erase(0, cleanedPath.find_first_not_of(" \t"));
+    cleanedPath.erase(cleanedPath.find_last_not_of(" \t") + 1);
+
+    // 去除首尾双引号
+    if (!cleanedPath.empty() && cleanedPath.front() == '"' && cleanedPath.back() == '"') {
+        cleanedPath = cleanedPath.substr(1, cleanedPath.size() - 2);
+    }
+
+    return true;
+}
+
 int main()
 {
-    if (!ConfigManager::getInstance().loadConfig("C:\\Users\\BatLabWS\\Desktop\\MyBasler\\config\\config_cam2.ini")) {
+    std::string configPath;
+
+    std::cout << "请输入配置文件(.ini)路径：";
+    std::getline(std::cin, configPath);  // 从命令行读取整行路径
+
+    if (!ConfigManager::getInstance().loadConfig(configPath)) {
         std::cout << "ini配置文件加载失败\n";
         return -1;
     }
