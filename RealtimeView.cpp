@@ -113,11 +113,19 @@ BOOL RealtimeView::Run()
 		return TRUE;
 	}
 	else { // 实时预览
+		// 跳帧显示减少资源占用
+		if (_skipFrameSwitch) {
+			_skipFrameSwitch = false;
+			return TRUE;
+		} else {
+			_skipFrameSwitch = true;
+		}
+		
 		_imageWidth = m_pBuffers->GetWidth();
 		_imageHeight = m_pBuffers->GetHeight();
 		float scale = CONFIG.getViewerScale();
 		cv::Mat image(_imageHeight, _imageWidth, GetCvFormat(CONFIG.getCvPixelFormat()), outAddress);
-
+		
 		if (CONFIG.getFocusPeakingLayer() || CONFIG.getHistLayer() || CONFIG.getMotionDetectorLayer()) {
 			cv::Mat viewImage;
 			cv::cvtColor(image, viewImage, cv::COLOR_GRAY2BGR); // 颜色格式转换，以便叠加显示

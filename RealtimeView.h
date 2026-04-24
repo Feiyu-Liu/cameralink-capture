@@ -52,6 +52,7 @@ private:
 	void _BufferInfoDisplay();
 
 	bool _isRecording = false;
+	bool _skipFrameSwitch = false;
 
     std::string _FrameSaveFolder;
 	// std::string _videoSavePath = "C:\\LiuFeiyu\\videos\\12-10test1.mp4";

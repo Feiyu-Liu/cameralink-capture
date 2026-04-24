@@ -1,0 +1,64 @@
+# Bundled third-party dependencies kept outside Git
+opencv/*
+openh264-2.5.0/*
+SaperaSDK/*
+
+# macOS metadata
+.DS_Store
+
+# Visual Studio / IDE state
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+Browse.VC.db
+*.VC.db
+*.opendb
+ipch/
+*.ipch
+
+# MSVC / linker / build outputs
+[Dd]ebug/
+[Rr]elease/
+[Rr]elease1/
+x64/
+[Aa][Rr][Mm]64/
+[Bb]in/
+[Oo]bj/
+*.obj
+*.o
+*.pch
+*.pdb
+*.idb
+*.ilk
+*.tlog
+*.lastbuildstate
+*.recipe
+*.log
+*.tmp
+*.cache
+*.enc
+
+# Project-local build output folders
+SaperaTest/x64/
+
+# Qt generated files
+build*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+.qmake.stash
+*.pro.user
+*.pro.user.*
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+
+# Test and coverage artifacts
+Testing/
+coverage/
+*.gcda
+*.gcno
