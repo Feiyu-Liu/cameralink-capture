@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <filesystem>
 #include <algorithm>
+#include <opencv2/core/utils/logger.hpp>
 
 SaperaUse cam;
 
@@ -34,6 +35,7 @@ bool validateConfigFile(const std::string& inputPath, std::string& cleanedPath) 
 int main(int argc, char* argv[])
 {
     SetConsoleOutputCP(CP_UTF8);
+    cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_ERROR);
 
     std::string configPath;
     int cycleCount = 1;
