@@ -1,74 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="CaptureWindow.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <Filter Include="源文件">
+    <Filter Include="Source Files">
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
-    <Filter Include="头文件">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4B04-88EB-625FBE52EBFB}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
-    <Filter Include="资源文件">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4C08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="SaperaUse.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="RealtimeView.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="RecordFromBuffer.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="ConfigManager.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="FrameBuffer.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
+    <ClCompile Include="CaptureRuntime.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="CaptureWindow.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="ConfigManager.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="FrameBuffer.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="main.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="PreviewMailbox.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="RealtimeView.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="RecordFromBuffer.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="SaperaUse.cpp"><Filter>Source Files</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CaptureWindow.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <Library Include="SaperaSDK\Lib\Win64\SapClassBasic.lib" />
+    <ClInclude Include="CaptureRuntime.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CaptureWindow.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="config.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ConfigManager.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="FrameBuffer.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="PreviewMailbox.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="RealtimeView.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="RecordFromBuffer.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="SaperaResource.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="SaperaUse.h"><Filter>Header Files</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="SaperaUse.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="RealtimeView.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="config.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="RecordFromBuffer.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="ConfigManager.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="FrameBuffer.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="SaperaResource.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="config.ini">
-      <Filter>资源文件</Filter>
-    </None>
+    <None Include="config.ini"><Filter>Resource Files</Filter></None>
   </ItemGroup>
 </Project>

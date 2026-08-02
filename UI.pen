@@ -1,0 +1,333 @@
+{
+  "version": "2.15",
+  "children": [
+    {
+      "type": "frame",
+      "id": "bi8Au",
+      "x": 0,
+      "y": 0,
+      "name": "CameraLink Capture — Main Window",
+      "clip": true,
+      "width": 602,
+      "height": 868,
+      "fill": "$surface",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "IHuiu",
+          "name": "Preview Workspace",
+          "width": 600,
+          "height": 600,
+          "fill": "$surface",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Lda6p",
+              "name": "Camera Preview Section",
+              "width": "fill_container",
+              "height": "fill_container",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "l3RPAn",
+                  "name": "Preview Canvas",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#292D31",
+                  "layout": "vertical",
+                  "padding": 20,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "BscdS",
+                      "name": "Mono8 Camera View",
+                      "clip": true,
+                      "width": 599,
+                      "height": 596,
+                      "fill": "#6C747A",
+                      "stroke": "#9AA2A8",
+                      "strokeWidth": 1,
+                      "layout": "none"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ICDeY",
+          "name": "Command Console",
+          "width": 600,
+          "height": 270,
+          "fill": "$terminal",
+          "stroke": "#2B3137",
+          "strokeWidth": {
+            "top": 1
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Y7Afl",
+              "name": "Console Toolbar",
+              "width": "fill_container",
+              "height": 38,
+              "fill": "#181C20",
+              "stroke": "#2B3137",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "padding": [
+                0,
+                14
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "JLZWZ",
+                  "name": "Console Title Group",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "OB5fh",
+                      "name": "Terminal Icon",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "terminal",
+                      "library": "lucide",
+                      "fill": "#9DA8B3"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "T7A5E",
+                  "name": "Console Actions",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "nNaaK",
+                      "name": "Clear Console",
+                      "width": 25,
+                      "height": 25,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Rsab2",
+                          "name": "Clear Console Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "trash-2",
+                          "library": "lucide",
+                          "fill": "$terminalMuted"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "wdDbn",
+                      "name": "Expand Console",
+                      "width": 25,
+                      "height": 25,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "T9fAMF",
+                          "name": "Expand Console Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "chevrons-up",
+                          "library": "lucide",
+                          "fill": "$terminalMuted"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "kiuqW",
+              "name": "Console Output",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "$terminal",
+              "layout": "vertical",
+              "gap": 5,
+              "padding": [
+                12,
+                16
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "NlhUr",
+                  "name": "Console info Line",
+                  "fill": "$terminalText",
+                  "content": "正在初始化相机…",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "wmNmy",
+                  "name": "Console ok Line",
+                  "fill": "#57C995",
+                  "content": "[OK] Xtium2-CL MX4 / CAM1  已连接",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "VsgQ5",
+                  "name": "Console muted Line",
+                  "fill": "$terminalMuted",
+                  "content": "配置: C:\\Users\\BatLabWS\\Desktop\\MyBasler\\config\\config_cam1.ini",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "hM3ud",
+                  "name": "Console muted Line",
+                  "fill": "$terminalMuted",
+                  "content": "格式: Mono8  |  2048 × 2048  |  120 fps  |  Buffer 1205",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "J8cWh",
+                  "name": "Console info Line",
+                  "fill": "$terminalText",
+                  "content": "Capture cycle 1/1",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "MQ65x",
+                  "name": "Console info Line",
+                  "fill": "$terminalText",
+                  "content": "Estimated recording duration (s): 10",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "fQPn1",
+                  "name": "Console prompt Line",
+                  "fill": "#71B9E8",
+                  "content": "按 R 开始录像，按 S 停止，按 Q 退出",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "O2XQS",
+                  "name": "Console cursor Line",
+                  "fill": "#FFFFFF",
+                  "content": "> _",
+                  "lineHeight": 1.2,
+                  "fontFamily": "Geist Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "surface": {
+      "type": "color",
+      "value": "#F7F8FA"
+    },
+    "panel": {
+      "type": "color",
+      "value": "#FFFFFF"
+    },
+    "ink": {
+      "type": "color",
+      "value": "#1A1A1A"
+    },
+    "muted": {
+      "type": "color",
+      "value": "#666666"
+    },
+    "quiet": {
+      "type": "color",
+      "value": "#8A9099"
+    },
+    "line": {
+      "type": "color",
+      "value": "#DDE1E6"
+    },
+    "lineSoft": {
+      "type": "color",
+      "value": "#EEF0F2"
+    },
+    "blue": {
+      "type": "color",
+      "value": "#1677B8"
+    },
+    "blueSoft": {
+      "type": "color",
+      "value": "#EAF5FC"
+    },
+    "green": {
+      "type": "color",
+      "value": "#16865B"
+    },
+    "terminal": {
+      "type": "color",
+      "value": "#111417"
+    },
+    "terminalText": {
+      "type": "color",
+      "value": "#D8DEE5"
+    },
+    "terminalMuted": {
+      "type": "color",
+      "value": "#7E8A96"
+    },
+    "danger": {
+      "type": "color",
+      "value": "#C93C37"
+    }
+  },
+  "fileToken": "367fb7ad-df9e-4894-93b8-198d22c63643"
+}

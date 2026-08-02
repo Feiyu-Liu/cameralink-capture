@@ -20,13 +20,58 @@
 #include <limits>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 namespace {
+
+template <typename... Values>
+void Log(ILogSink* sink, LogLevel level, Values&&... values) noexcept {
+    try {
+        std::ostringstream stream;
+        (stream << ... << std::forward<Values>(values));
+        WriteLog(sink, level, stream.str());
+    }
+    catch (...) {
+    }
+}
 
 std::chrono::milliseconds CaptureTimeout(int frameCount, int frameRate) {
     const auto expectedMilliseconds =
         static_cast<std::int64_t>(frameCount) * 1000 / std::max(frameRate, 1);
     return std::chrono::milliseconds(std::max<std::int64_t>(5000, expectedMilliseconds * 3 + 2000));
+}
+
+CaptureWindow WaitForCaptureCompletion(
+    FrameArrivalTracker& tracker,
+    std::chrono::milliseconds timeout,
+    CommandQueue* commands,
+    bool stopCancels,
+    const char* cancellationMessage) {
+    if (commands == nullptr) {
+        return tracker.WaitForCompletion(timeout);
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (tracker.Snapshot().status == CaptureWindowStatus::Armed) {
+        const std::optional<CaptureCommand> cancellation = commands->PendingCancellation();
+        if (cancellation == CaptureCommand::Quit ||
+            (stopCancels && cancellation == CaptureCommand::Stop)) {
+            tracker.Cancel(cancellationMessage);
+            if (cancellation == CaptureCommand::Stop) {
+                commands->ClearStop();
+            }
+            break;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            tracker.Timeout("Timed out while waiting for the capture window.");
+            break;
+        }
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+        tracker.WaitForTerminal(std::min(remaining, std::chrono::milliseconds(50)));
+    }
+    return tracker.Snapshot();
 }
 
 std::string BuildOutputPath() {
@@ -41,12 +86,8 @@ std::string BuildOutputPath() {
     return stream.str();
 }
 
-void PrintCleanupError(const char* operation) noexcept {
-    try {
-        std::cerr << "Cleanup failed: " << operation << std::endl;
-    }
-    catch (...) {
-    }
+void PrintCleanupError(ILogSink* sink, const char* operation) noexcept {
+    Log(sink, LogLevel::Error, "Cleanup failed: ", operation);
 }
 
 bool ValidateCcfStructure(const char* path, std::string& error) {
@@ -98,6 +139,7 @@ struct SaperaUse::CameraSession {
     SapOwned<SapTransfer> transfer;
     FrameLayout frameLayout;
     FrameArrivalTracker tracker;
+    ILogSink* logSink = nullptr;
 
     ~CameraSession() noexcept {
         Close();
@@ -109,14 +151,14 @@ struct SaperaUse::CameraSession {
         if (transfer && static_cast<bool>(*transfer)) {
             if (transfer->IsGrabbing()) {
                 if (!transfer->Freeze()) {
-                    PrintCleanupError("SapTransfer::Freeze");
+                    PrintCleanupError(logSink, "SapTransfer::Freeze");
                     success = false;
                 }
                 if (!transfer->Wait(5000)) {
-                    PrintCleanupError("SapTransfer::Wait");
+                    PrintCleanupError(logSink, "SapTransfer::Wait");
                     success = false;
                     if (!transfer->Abort() || !transfer->Wait(5000)) {
-                        PrintCleanupError("SapTransfer::Abort/Wait");
+                        PrintCleanupError(logSink, "SapTransfer::Abort/Wait");
                     }
                 }
             }
@@ -125,27 +167,27 @@ struct SaperaUse::CameraSession {
         // Constructor callbacks are unregistered by Destroy(); UnregisterCallback()
         // only applies to extended events added through RegisterCallback().
         if (!transfer.Destroy()) {
-            PrintCleanupError("SapTransfer::Destroy");
+            PrintCleanupError(logSink, "SapTransfer::Destroy");
             success = false;
         }
         transfer.Reset();
 
         if (processor) {
             if (!processor->Shutdown()) {
-                PrintCleanupError("RealtimeView::Shutdown");
+                PrintCleanupError(logSink, "RealtimeView::Shutdown");
                 success = false;
             }
             processor.reset();
         }
 
         if (!buffers.Destroy()) {
-            PrintCleanupError("SapBuffer::Destroy");
+            PrintCleanupError(logSink, "SapBuffer::Destroy");
             success = false;
         }
         buffers.Reset();
 
         if (!acquisition.Destroy()) {
-            PrintCleanupError("SapAcquisition::Destroy");
+            PrintCleanupError(logSink, "SapAcquisition::Destroy");
             success = false;
         }
         acquisition.Reset();
@@ -258,15 +300,44 @@ bool SaperaUse::_ValidateRuntimeConfig(std::string& error) const {
 }
 
 bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* configFilePath) {
+    return _RunDevice(grabberIndex, deviceIndex, configFilePath, nullptr, nullptr, nullptr);
+}
+
+bool SaperaUse::RunDevice(
+    int grabberIndex,
+    int deviceIndex,
+    const char* configFilePath,
+    CommandQueue& commands,
+    ILogSink* logSink,
+    IPreviewSink* previewSink) {
+    return _RunDevice(
+        grabberIndex,
+        deviceIndex,
+        configFilePath,
+        &commands,
+        logSink,
+        previewSink);
+}
+
+bool SaperaUse::_RunDevice(
+    int grabberIndex,
+    int deviceIndex,
+    const char* configFilePath,
+    CommandQueue* commands,
+    ILogSink* logSink,
+    IPreviewSink* previewSink) {
     Shutdown();
+    const auto quitRequested = [commands]() noexcept {
+        return commands != nullptr && commands->IsQuitRequested();
+    };
 
     std::string error;
     if (!_ValidateRuntimeConfig(error)) {
-        std::cerr << "Invalid configuration: " << error << std::endl;
+        Log(logSink, LogLevel::Error, "Invalid configuration: ", error);
         return false;
     }
     if (grabberIndex < 0 || grabberIndex >= static_cast<int>(_devicesInfo.size())) {
-        std::cerr << "GrabberIndex is out of range: " << grabberIndex << std::endl;
+        Log(logSink, LogLevel::Error, "GrabberIndex is out of range: ", grabberIndex);
         return false;
     }
 
@@ -274,27 +345,32 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     const std::string& grabberName = std::get<0>(deviceInfo);
     const auto& deviceNames = std::get<1>(deviceInfo);
     if (deviceIndex < 0 || deviceIndex >= static_cast<int>(deviceNames.size())) {
-        std::cerr << "CameraIndex is out of range: " << deviceIndex << std::endl;
+        Log(logSink, LogLevel::Error, "CameraIndex is out of range: ", deviceIndex);
         return false;
     }
     if (configFilePath == nullptr || configFilePath[0] == '\0' ||
         !std::filesystem::exists(std::filesystem::path(configFilePath))) {
-        std::cerr << "Grabber configuration file does not exist: "
-                  << (configFilePath == nullptr ? "<null>" : configFilePath) << std::endl;
+        Log(logSink, LogLevel::Error, "Grabber configuration file does not exist: ",
+            configFilePath == nullptr ? "<null>" : configFilePath);
         return false;
     }
     if (!ValidateCcfStructure(configFilePath, error)) {
-        std::cerr << "Invalid grabber configuration file: " << error << std::endl;
+        Log(logSink, LogLevel::Error, "Invalid grabber configuration file: ", error);
         return false;
     }
 
     auto session = std::make_unique<CameraSession>();
+    session->logSink = logSink;
     const SapLocation location(grabberName.c_str(), deviceIndex);
     session->acquisition.Reset(std::make_unique<SapAcquisition>(location, configFilePath));
     if (!session->acquisition->Create()) {
         _errorStaus = 2;
-        std::cerr << "Failed to create SapAcquisition." << std::endl;
+        Log(logSink, LogLevel::Error, "Failed to create SapAcquisition.");
         return false;
+    }
+    if (quitRequested()) {
+        Log(logSink, LogLevel::Info, "Initialization cancelled.");
+        return true;
     }
 
     session->buffers.Reset(std::make_unique<SapBufferWithTrash>(2, session->acquisition.Get()));
@@ -302,18 +378,21 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     if (CONFIG.getRecordMode() == 2) {
         const int skipCount = CONFIG.getTriigerMode() == 1 ? 1 : 0;
         bufferCount = CONFIG.getRecordFrame() + CONFIG.getBufferOverflow() + skipCount;
-        std::cout << "Estimated recording duration (s): "
-                  << static_cast<double>(CONFIG.getRecordFrame()) / CONFIG.getFrameRate()
-                  << std::endl;
+        Log(logSink, LogLevel::Info, "Estimated recording duration (s): ",
+            static_cast<double>(CONFIG.getRecordFrame()) / CONFIG.getFrameRate());
     }
     if (!session->buffers->SetCount(bufferCount) || !session->buffers->Create()) {
         _errorStaus = 3;
-        std::cerr << "Failed to create " << bufferCount << " Sapera buffers." << std::endl;
+        Log(logSink, LogLevel::Error, "Failed to create ", bufferCount, " Sapera buffers.");
         return false;
+    }
+    if (quitRequested()) {
+        Log(logSink, LogLevel::Info, "Initialization cancelled.");
+        return true;
     }
 
     if (!FrameLayout::FromSapBuffer(*session->buffers, session->frameLayout, error)) {
-        std::cerr << "Unsupported camera buffer: " << error << std::endl;
+        Log(logSink, LogLevel::Error, "Unsupported camera buffer: ", error);
         return false;
     }
 
@@ -321,11 +400,17 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
         session->buffers.Get(),
         session->frameLayout,
         nullptr,
-        nullptr);
+        nullptr,
+        logSink,
+        previewSink);
     if (!session->processor->Create()) {
         _errorStaus = 6;
-        std::cerr << "Failed to create RealtimeView." << std::endl;
+        Log(logSink, LogLevel::Error, "Failed to create RealtimeView.");
         return false;
+    }
+    if (quitRequested()) {
+        Log(logSink, LogLevel::Info, "Initialization cancelled.");
+        return true;
     }
 
     session->transfer.Reset(std::make_unique<SapAcqToBuf>(
@@ -336,27 +421,30 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     SapXferPair* pair = session->transfer->GetPair(0);
     if (pair == nullptr || !pair->SetTrashCallbackInfo(XferCallback, session.get())) {
         _errorStaus = 4;
-        std::cerr << "Failed to register the Sapera trash callback." << std::endl;
+        Log(logSink, LogLevel::Error, "Failed to register the Sapera trash callback.");
         return false;
     }
     if (!session->transfer->Create()) {
         _errorStaus = 4;
-        std::cerr << "Failed to create SapTransfer." << std::endl;
+        Log(logSink, LogLevel::Error, "Failed to create SapTransfer.");
         return false;
+    }
+    if (quitRequested()) {
+        Log(logSink, LogLevel::Info, "Initialization cancelled.");
+        return true;
     }
 
     session->tracker.Reset(session->buffers->GetCount(), session->buffers->GetIndex());
-    std::cout << "Selected grabber: " << grabberName
-              << ", device: " << deviceNames.at(deviceIndex) << std::endl;
-    std::cout << "Buffer layout: " << session->frameLayout.width << 'x'
-              << session->frameLayout.height << ", Mono8, pitch="
-              << session->frameLayout.pitch << ", buffers="
-              << session->buffers->GetCount() << std::endl;
+    Log(logSink, LogLevel::Success, "Selected grabber: ", grabberName,
+        ", device: ", deviceNames.at(deviceIndex));
+    Log(logSink, LogLevel::Info, "Buffer layout: ", session->frameLayout.width, 'x',
+        session->frameLayout.height, ", Mono8, pitch=", session->frameLayout.pitch,
+        ", buffers=", session->buffers->GetCount());
 
     _session = std::move(session);
     CameraSession& active = *_session;
     if (!active.transfer->Grab()) {
-        std::cerr << "Failed to start continuous acquisition." << std::endl;
+        Log(logSink, LogLevel::Error, "Failed to start continuous acquisition.");
         Shutdown();
         return false;
     }
@@ -364,73 +452,107 @@ bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* conf
     SapXferFrameRateInfo* frameRateInfo = active.transfer->GetFrameRateStatistics();
     bool quit = false;
     while (!quit) {
-        _FrameRateDisp(frameRateInfo);
+        _FrameRateDisp(frameRateInfo, logSink);
 
         if (_isTriggerToRecording) {
-            if (!_TriggerToBufferRecord(active)) {
-                std::string stopError;
-                _StopTransfer(active, stopError);
-                active.acquisition->SetParameter(
-                    CORACQ_PRM_EXT_TRIGGER_ENABLE,
-                    CORACQ_VAL_EXT_TRIGGER_OFF,
-                    TRUE);
-                if (!active.transfer->Grab()) {
-                    std::cerr << "Failed to resume free-running acquisition." << std::endl;
-                    quit = true;
-                }
-                _isTriggerToRecording = false;
-                std::cout << "TTL recording stopped." << std::endl;
+            const bool recorded = _TriggerToBufferRecord(active, commands);
+            const bool quitRequested = commands != nullptr && commands->IsQuitRequested();
+            std::string stopError;
+            _StopTransfer(active, stopError);
+            active.acquisition->SetParameter(
+                CORACQ_PRM_EXT_TRIGGER_ENABLE,
+                CORACQ_VAL_EXT_TRIGGER_OFF,
+                TRUE);
+            _isTriggerToRecording = false;
+            if (quitRequested) {
+                quit = true;
+                continue;
+            }
+            if (!active.transfer->Grab()) {
+                Log(logSink, LogLevel::Error, "Failed to resume free-running acquisition.");
+                quit = true;
+            }
+            else {
+                Log(logSink,
+                    recorded ? LogLevel::Success : LogLevel::Warning,
+                    recorded ? "TTL recording completed." : "TTL recording stopped.");
             }
             continue;
         }
 
-        if (_kbhit() == 0) {
+        CaptureCommand command = CaptureCommand::Info;
+        bool hasCommand = false;
+        if (commands != nullptr) {
+            if (commands->IsQuitRequested()) {
+                command = CaptureCommand::Quit;
+                hasCommand = true;
+            }
+            else {
+                hasCommand = commands->WaitPop(command, std::chrono::milliseconds(20));
+            }
+        }
+        else if (_kbhit() != 0) {
+            const char key = static_cast<char>(_getch());
+            const CommandParseResult parsed = ParseCaptureCommand(std::string(1, key));
+            if (parsed.kind == ParsedCommandKind::Command) {
+                command = parsed.command;
+                hasCommand = true;
+            }
+        }
+        else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        if (!hasCommand) {
             continue;
         }
 
-        const char key = static_cast<char>(_getch());
-        switch (key) {
-        case 'q': case 'Q':
+        switch (command) {
+        case CaptureCommand::Quit:
             quit = true;
             break;
-        case 'g': case 'G':
+        case CaptureCommand::Start:
             if (!active.transfer->IsGrabbing() && active.transfer->Grab()) {
-                std::cout << "Acquisition started." << std::endl;
+                Log(logSink, LogLevel::Success, "Acquisition started.");
             }
             break;
-        case 'p': case 'P':
+        case CaptureCommand::Pause:
             if (active.transfer->IsGrabbing()) {
                 std::string stopError;
                 if (_StopTransfer(active, stopError)) {
-                    std::cout << "Acquisition paused." << std::endl;
+                    Log(logSink, LogLevel::Info, "Acquisition paused.");
                 }
                 else {
-                    std::cerr << stopError << std::endl;
+                    Log(logSink, LogLevel::Error, stopError);
                 }
             }
             break;
-        case 'i': case 'I':
-            active.processor->keyControler = 1;
+        case CaptureCommand::Info:
+            active.processor->SubmitControl(RealtimeView::ControlCommand::Info);
             break;
-        case 'r': case 'R':
+        case CaptureCommand::Record:
             if (CONFIG.getRecordMode() == 1) {
-                active.processor->keyControler = 2;
+                active.processor->SubmitControl(RealtimeView::ControlCommand::StartRecording);
             }
             else if (CONFIG.getTriigerMode() == 0) {
                 if (!active.transfer->IsGrabbing()) {
-                    std::cerr << "Start acquisition before recording." << std::endl;
+                    Log(logSink, LogLevel::Warning, "Start acquisition before recording.");
                 }
-                else if (!_KeyToBufferRecord(active)) {
-                    std::cerr << "Keyboard-triggered recording failed." << std::endl;
+                else if (!_KeyToBufferRecord(active, commands) &&
+                    !(commands != nullptr && commands->IsQuitRequested())) {
+                    Log(logSink, LogLevel::Error, "Keyboard-triggered recording failed.");
                 }
             }
             else {
                 _isTriggerToRecording = true;
             }
             break;
-        case 's': case 'S':
+        case CaptureCommand::Stop:
             if (CONFIG.getRecordMode() == 1) {
-                active.processor->keyControler = 3;
+                active.processor->SubmitControl(RealtimeView::ControlCommand::StopRecording);
+            }
+            if (commands != nullptr) {
+                commands->ClearStop();
             }
             break;
         default:
@@ -464,7 +586,7 @@ void SaperaUse::XferCallback(SapXferCallbackInfo* info) {
     }
 }
 
-float SaperaUse::_FrameRateDisp(SapXferFrameRateInfo* frameRateInfo) {
+float SaperaUse::_FrameRateDisp(SapXferFrameRateInfo* frameRateInfo, ILogSink* logSink) {
     if (frameRateInfo == nullptr || !frameRateInfo->IsLiveFrameRateAvailable() ||
         frameRateInfo->IsLiveFrameRateStalled()) {
         return _SteadyFrameRate;
@@ -474,7 +596,7 @@ float SaperaUse::_FrameRateDisp(SapXferFrameRateInfo* frameRateInfo) {
         ? std::round(frameRateInfo->GetLiveFrameRate())
         : frameRateInfo->GetLiveFrameRate();
     if (currentFrameRate != _SteadyFrameRate) {
-        std::cout << "Live frame rate: " << currentFrameRate << std::endl;
+        Log(logSink, LogLevel::Info, "Live frame rate: ", currentFrameRate);
         _SteadyFrameRate = currentFrameRate;
     }
     return currentFrameRate;
@@ -504,20 +626,24 @@ bool SaperaUse::_StopTransfer(CameraSession& session, std::string& error) const 
     return true;
 }
 
-bool SaperaUse::_KeyToBufferRecord(CameraSession& session) {
+bool SaperaUse::_KeyToBufferRecord(CameraSession& session, CommandQueue* commands) {
     std::string error;
     const int frameCount = CONFIG.getRecordFrame();
     if (!session.tracker.Arm(static_cast<std::size_t>(frameCount), 0, error)) {
-        std::cerr << "Could not arm keyboard capture: " << error << std::endl;
+        Log(session.logSink, LogLevel::Error, "Could not arm keyboard capture: ", error);
         return false;
     }
 
-    std::cout << "Buffered recording started." << std::endl;
-    const CaptureWindow window = session.tracker.WaitForCompletion(
-        CaptureTimeout(frameCount, CONFIG.getFrameRate()));
+    Log(session.logSink, LogLevel::Info, "Buffered recording started.");
+    const CaptureWindow window = WaitForCaptureCompletion(
+        session.tracker,
+        CaptureTimeout(frameCount, CONFIG.getFrameRate()),
+        commands,
+        false,
+        "Buffered recording was cancelled because the application is closing.");
     const bool stopped = _StopTransfer(session, error);
     if (!stopped) {
-        std::cerr << error << std::endl;
+        Log(session.logSink, LogLevel::Error, error);
     }
 
     bool saved = false;
@@ -525,21 +651,24 @@ bool SaperaUse::_KeyToBufferRecord(CameraSession& session) {
         saved = _SaveCaptureWindow(session, window);
     }
     else if (window.status != CaptureWindowStatus::Complete) {
-        std::cerr << "Capture failed [" << CaptureWindowStatusName(window.status)
-                  << "]: " << window.message << std::endl;
+        Log(session.logSink, LogLevel::Error, "Capture failed [",
+            CaptureWindowStatusName(window.status), "]: ", window.message);
     }
 
+    if (commands != nullptr && commands->IsQuitRequested()) {
+        return false;
+    }
     if (!session.transfer->Grab()) {
-        std::cerr << "Failed to resume acquisition after buffered recording." << std::endl;
+        Log(session.logSink, LogLevel::Error, "Failed to resume acquisition after buffered recording.");
         return false;
     }
     return saved;
 }
 
-bool SaperaUse::_TriggerToBufferRecord(CameraSession& session) {
+bool SaperaUse::_TriggerToBufferRecord(CameraSession& session, CommandQueue* commands) {
     std::string error;
     if (!_StopTransfer(session, error)) {
-        std::cerr << error << std::endl;
+        Log(session.logSink, LogLevel::Error, error);
         return false;
     }
 
@@ -561,12 +690,12 @@ bool SaperaUse::_TriggerToBufferRecord(CameraSession& session) {
             CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT,
             triggerFrameCount,
             TRUE)) {
-        std::cerr << "Failed to configure TTL trigger parameters." << std::endl;
+        Log(session.logSink, LogLevel::Error, "Failed to configure TTL trigger parameters.");
         return false;
     }
 
     if (!session.tracker.Arm(static_cast<std::size_t>(frameCount), 1, error)) {
-        std::cerr << "Could not arm TTL capture: " << error << std::endl;
+        Log(session.logSink, LogLevel::Error, "Could not arm TTL capture: ", error);
         return false;
     }
     if (!session.transfer->Grab()) {
@@ -574,13 +703,26 @@ bool SaperaUse::_TriggerToBufferRecord(CameraSession& session) {
         return false;
     }
 
-    std::cout << "Waiting for TTL trigger (press S to cancel)." << std::endl;
+    Log(session.logSink, LogLevel::Info, "Waiting for TTL trigger (enter S to cancel).");
     while (!session.tracker.WaitForFirstEvent(std::chrono::milliseconds(50))) {
         const CaptureWindow snapshot = session.tracker.Snapshot();
         if (snapshot.status != CaptureWindowStatus::Armed) {
             break;
         }
-        if (_kbhit() != 0) {
+        if (commands != nullptr) {
+            const std::optional<CaptureCommand> cancellation = commands->PendingCancellation();
+            if (cancellation == CaptureCommand::Quit || cancellation == CaptureCommand::Stop) {
+                session.tracker.Cancel(cancellation == CaptureCommand::Quit
+                    ? "TTL capture was cancelled because the application is closing."
+                    : "TTL capture was cancelled by the user.");
+                if (cancellation == CaptureCommand::Stop) {
+                    commands->ClearStop();
+                }
+                _StopTransfer(session, error);
+                return false;
+            }
+        }
+        else if (_kbhit() != 0) {
             const char key = static_cast<char>(_getch());
             if (key == 's' || key == 'S') {
                 session.tracker.Cancel("TTL capture was cancelled by the user.");
@@ -590,17 +732,27 @@ bool SaperaUse::_TriggerToBufferRecord(CameraSession& session) {
         }
     }
 
-    std::cout << "TTL trigger received; recording started." << std::endl;
-    const CaptureWindow window = session.tracker.WaitForCompletion(
-        CaptureTimeout(frameCount + 1, CONFIG.getFrameRate()));
+    const CaptureWindow firstEvent = session.tracker.Snapshot();
+    if (firstEvent.status != CaptureWindowStatus::Armed &&
+        firstEvent.status != CaptureWindowStatus::Complete) {
+        return false;
+    }
+
+    Log(session.logSink, LogLevel::Info, "TTL trigger received; recording started.");
+    const CaptureWindow window = WaitForCaptureCompletion(
+        session.tracker,
+        CaptureTimeout(frameCount + 1, CONFIG.getFrameRate()),
+        commands,
+        true,
+        "TTL capture was cancelled by the user.");
     const bool stopped = _StopTransfer(session, error);
     if (!stopped) {
-        std::cerr << error << std::endl;
+        Log(session.logSink, LogLevel::Error, error);
         return false;
     }
     if (window.status != CaptureWindowStatus::Complete) {
-        std::cerr << "TTL capture failed [" << CaptureWindowStatusName(window.status)
-                  << "]: " << window.message << std::endl;
+        Log(session.logSink, LogLevel::Error, "TTL capture failed [",
+            CaptureWindowStatusName(window.status), "]: ", window.message);
         return false;
     }
     return _SaveCaptureWindow(session, window);
@@ -613,7 +765,7 @@ bool SaperaUse::_SaveCaptureWindow(CameraSession& session, const CaptureWindow& 
             session.tracker.TotalNormalFrames(),
             session.buffers->GetCount(),
             error)) {
-        std::cerr << "Capture window is not safe to save: " << error << std::endl;
+        Log(session.logSink, LogLevel::Error, "Capture window is not safe to save: ", error);
         return false;
     }
 
@@ -624,7 +776,7 @@ bool SaperaUse::_SaveCaptureWindow(CameraSession& session, const CaptureWindow& 
             session.buffers->GetCount(),
             indices,
             error)) {
-        std::cerr << "Could not build capture indices: " << error << std::endl;
+        Log(session.logSink, LogLevel::Error, "Could not build capture indices: ", error);
         return false;
     }
 
@@ -632,7 +784,7 @@ bool SaperaUse::_SaveCaptureWindow(CameraSession& session, const CaptureWindow& 
     RecordFromBuffer recorder(*session.buffers, session.frameLayout);
     try {
         if (!CONFIG.getSaveAsFrameSequence()) {
-            std::cout << "Saving video..." << std::endl;
+            Log(session.logSink, LogLevel::Info, "Saving video...");
             if (!recorder.SaveVideo(
                     outputPath,
                     GetEncoder(CONFIG.getEncoder()),
@@ -641,10 +793,10 @@ bool SaperaUse::_SaveCaptureWindow(CameraSession& session, const CaptureWindow& 
                     session.frameLayout.height,
                     false,
                     indices)) {
-                std::cerr << "Video save failed: " << outputPath << std::endl;
+                Log(session.logSink, LogLevel::Error, "Video save failed: ", outputPath);
                 return false;
             }
-            std::cout << "Video saved to: " << outputPath << std::endl;
+            Log(session.logSink, LogLevel::Success, "Video saved to: ", outputPath);
             return true;
         }
 
@@ -653,18 +805,18 @@ bool SaperaUse::_SaveCaptureWindow(CameraSession& session, const CaptureWindow& 
         std::error_code fileError;
         std::filesystem::create_directories(folder, fileError);
         if (fileError) {
-            std::cerr << "Could not create frame folder: " << fileError.message() << std::endl;
+            Log(session.logSink, LogLevel::Error, "Could not create frame folder: ", fileError.message());
             return false;
         }
         if (!recorder.SaveFrames(folder.string(), indices)) {
-            std::cerr << "Frame sequence save failed: " << folder.string() << std::endl;
+            Log(session.logSink, LogLevel::Error, "Frame sequence save failed: ", folder.string());
             return false;
         }
-        std::cout << "Frames saved to: " << folder.string() << std::endl;
+        Log(session.logSink, LogLevel::Success, "Frames saved to: ", folder.string());
         return true;
     }
     catch (const std::exception& exception) {
-        std::cerr << "Capture save failed: " << exception.what() << std::endl;
+        Log(session.logSink, LogLevel::Error, "Capture save failed: ", exception.what());
         return false;
     }
 }

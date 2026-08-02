@@ -35,8 +35,10 @@ public:
     void OnFrame(int bufferIndex, int eventCount);
     void OnTrashFrame(int eventCount);
     void Cancel(const std::string& reason);
+    void Timeout(const std::string& reason);
 
     bool WaitForFirstEvent(std::chrono::milliseconds timeout);
+    bool WaitForTerminal(std::chrono::milliseconds timeout);
     CaptureWindow WaitForCompletion(std::chrono::milliseconds timeout);
     CaptureWindow Snapshot() const;
     std::uint64_t TotalNormalFrames() const;

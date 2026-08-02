@@ -1,13 +1,38 @@
 #include "RealtimeView.h"
 
 #include <filesystem>
+#include <sstream>
+#include <utility>
+
+namespace {
+
+template <typename... Values>
+void Log(ILogSink* sink, LogLevel level, Values&&... values) noexcept {
+	try {
+		std::ostringstream stream;
+		(stream << ... << std::forward<Values>(values));
+		WriteLog(sink, level, stream.str());
+	}
+	catch (...) {
+	}
+}
+
+} // namespace
 
 
-RealtimeView::RealtimeView(SapBuffer* pBuffers, const FrameLayout& layout, SapProCallback pCallback, void* pContext)
-	:SapProcessing(pBuffers, pCallback, pContext), _frameLayout(layout)
+RealtimeView::RealtimeView(
+	SapBuffer* pBuffers,
+	const FrameLayout& layout,
+	SapProCallback pCallback,
+	void* pContext,
+	ILogSink* logSink,
+	IPreviewSink* previewSink)
+	: SapProcessing(pBuffers, pCallback, pContext),
+	  _frameLayout(layout),
+	  _logSink(logSink),
+	  _previewSink(previewSink)
 {
 	// 构造函数
-	keyControler = 0;
 	_imageConter = 1;
 
 }
@@ -33,6 +58,11 @@ bool RealtimeView::Shutdown() noexcept
 	return success;
 }
 
+void RealtimeView::SubmitControl(ControlCommand command) noexcept
+{
+	_pendingControl.store(command);
+}
+
 BOOL RealtimeView::Run()
 {
 	// float frameRate = m_pBuffers->GetFrameRate();
@@ -40,14 +70,14 @@ BOOL RealtimeView::Run()
 
 	int proIndex = this->GetIndex();  // 本类的获取索引方法与Execute/ExecuteNext相关联
 
-	if (keyControler != 0) {
-		switch (keyControler) {
-            case 1:
+	const ControlCommand control = _pendingControl.exchange(ControlCommand::None);
+	if (control != ControlCommand::None) {
+		switch (control) {
+            case ControlCommand::Info:
 				this->_BufferInfoDisplay();
-				keyControler = 0;
 				break;
-			case 2:
-				if (!_isRecording) {
+			case ControlCommand::StartRecording:
+				if (!_isRecording.load()) {
 					// 构建视频文件名
 					std::stringstream ss;
 					std::time_t t = std::time(0);
@@ -59,9 +89,9 @@ BOOL RealtimeView::Run()
 					if (!CONFIG.getSaveAsFrameSequence()) { // 录制视频
 
 						cv::Size frameSize(_frameLayout.width, _frameLayout.height);
-						_isRecording = _InitVideoWriter(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(), frameSize, false);
+						_isRecording.store(_InitVideoWriter(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(), frameSize, false));
 
-						std::cout << "\n\n开始流式录制\n\n" << std::endl;
+						Log(_logSink, LogLevel::Success, "开始流式录制");
 						return TRUE;
 					}
 					else { // 录制序列帧
@@ -70,27 +100,25 @@ BOOL RealtimeView::Run()
 						std::error_code folderError;
 						std::filesystem::create_directories(frameFolder, folderError);
 						if (folderError) {
-							std::cerr << "Failed to create directory: " << folderError.message() << std::endl;
+							Log(_logSink, LogLevel::Error, "Failed to create directory: ", folderError.message());
 							return FALSE;
 						}
 						_FrameSaveFolder = frameFolder.string() + "\\";
 
-						_isRecording = true;
+						_isRecording.store(true);
 						_imageConter = 1;
 
-						std::cout << "\n\n开始流式录制(保存为序列帧)\n\n" << std::endl;
+						Log(_logSink, LogLevel::Success, "开始流式录制(保存为序列帧)");
 						return TRUE;
 					}
 				}
-				keyControler = 0;
                 break;
-			case 3:
+			case ControlCommand::StopRecording:
 				if (!CONFIG.getSaveAsFrameSequence()) { // 录制视频
                     _ReleaseVideoWriter();
 				}
-				_isRecording = false;
-				keyControler = 0;
-				std::cout << "\n\n停止流式录制\n" << "已保存至：" << CONFIG.getSavePath() << std::endl;
+				_isRecording.store(false);
+				Log(_logSink, LogLevel::Success, "停止流式录制，已保存至：", CONFIG.getSavePath());
 				break;
 			default:
 				break;
@@ -104,7 +132,7 @@ BOOL RealtimeView::Run()
 			return true;
 		}
 		if (!mappedFrame.Map(*m_pBuffers, proIndex, _frameLayout, mapError)) {
-			std::cerr << "Frame mapping failed: " << mapError << std::endl;
+			Log(_logSink, LogLevel::Error, "Frame mapping failed: ", mapError);
 			return false;
 		}
 		return true;
@@ -114,7 +142,7 @@ BOOL RealtimeView::Run()
 	// CV_8UC1对应SapFormatMono8
 	//
 	/*
-	if (_isRecording) {
+	if (_isRecording.load()) {
 		cv::Mat image(_imageHeight, _imageWidth, CV_8UC1, outAddress);
 		_WriteFrame(image);
 	}
@@ -123,9 +151,9 @@ BOOL RealtimeView::Run()
 	if (_isRecording) {
 		if (!CONFIG.getSaveAsFrameSequence()) {
 			if (!ensureMapped() || !_WriteFrame(mappedFrame.Image())) {
-				std::cerr << "Streaming recording stopped because a frame could not be written." << std::endl;
+				Log(_logSink, LogLevel::Error, "Streaming recording stopped because a frame could not be written.");
 				_ReleaseVideoWriter();
-				_isRecording = false;
+				_isRecording.store(false);
 				return FALSE;
 			}
 		}
@@ -135,15 +163,14 @@ BOOL RealtimeView::Run()
 			std::string filePath = ss.str();
 			try {
 				if (!ensureMapped() || !cv::imwrite(filePath, mappedFrame.Image())) {
-					std::cerr << "Failed to save frame: " << filePath << std::endl;
-					_isRecording = false;
+					Log(_logSink, LogLevel::Error, "Failed to save frame: ", filePath);
+					_isRecording.store(false);
 					return FALSE;
 				}
 			}
 			catch (const cv::Exception& exception) {
-				std::cerr << "Failed to save frame: " << filePath << std::endl;
-				std::cerr << exception.what() << std::endl;
-				_isRecording = false;
+				Log(_logSink, LogLevel::Error, "Failed to save frame: ", filePath, " - ", exception.what());
+				_isRecording.store(false);
 				return FALSE;
 			}
 			_imageConter += 1;
@@ -151,7 +178,7 @@ BOOL RealtimeView::Run()
 	}
 
 
-	if (_isRecording && CONFIG.getPauseView()) { // 录制时不显示画面
+	if (_isRecording.load() && CONFIG.getPauseView()) { // 录制时不显示画面
 		return TRUE;
 	}
 	else { // 实时预览
@@ -163,7 +190,6 @@ BOOL RealtimeView::Run()
 			_skipFrameSwitch = true;
 		}
 
-		double scale = CONFIG.getViewerScale();
 		if (!ensureMapped()) {
 			return FALSE;
 		}
@@ -190,22 +216,44 @@ BOOL RealtimeView::Run()
 				// std::cout << isMotionDetected << std::endl;
 			}
 
-			if (scale != 1) {
-				cv::resize(viewImage, viewImage, cv::Size(
-					static_cast<int>(image.cols * scale),
-					static_cast<int>(image.rows * scale))); // scale
+			if (_previewSink != nullptr) {
+				try {
+					_previewSink->Publish(viewImage);
+				}
+				catch (...) {
+					Log(_logSink, LogLevel::Error, "Preview sink rejected a BGR8 frame.");
+				}
 			}
-			cv::imshow("Captured Frame", viewImage);
-			cv::waitKey(CONFIG.getCvWaitKey());
+			else {
+				const double scale = CONFIG.getViewerScale();
+				if (scale != 1) {
+					cv::resize(viewImage, viewImage, cv::Size(
+						static_cast<int>(image.cols * scale),
+						static_cast<int>(image.rows * scale)));
+				}
+				cv::imshow("Captured Frame", viewImage);
+				cv::waitKey(CONFIG.getCvWaitKey());
+			}
 			return TRUE;
 		} else {
-			if (scale != 1) {
-				cv::resize(image, image, cv::Size(
-					static_cast<int>(image.cols * scale),
-					static_cast<int>(image.rows * scale))); // scale
+			if (_previewSink != nullptr) {
+				try {
+					_previewSink->Publish(image);
+				}
+				catch (...) {
+					Log(_logSink, LogLevel::Error, "Preview sink rejected a Mono8 frame.");
+				}
 			}
-			cv::imshow("Captured Frame", image);
-			cv::waitKey(CONFIG.getCvWaitKey());
+			else {
+				const double scale = CONFIG.getViewerScale();
+				if (scale != 1) {
+					cv::resize(image, image, cv::Size(
+						static_cast<int>(image.cols * scale),
+						static_cast<int>(image.rows * scale)));
+				}
+				cv::imshow("Captured Frame", image);
+				cv::waitKey(CONFIG.getCvWaitKey());
+			}
 			return TRUE;
 		}
 	}
@@ -217,7 +265,7 @@ bool RealtimeView::_InitVideoWriter(const std::string& filename, int codec, doub
 {
 	_videoWriter.open(filename, codec, fps, frameSize, isColor);
 	if (!_videoWriter.isOpened()) {
-		std::cerr << "Error: Could not open the video writer." << std::endl;
+		Log(_logSink, LogLevel::Error, "Error: Could not open the video writer.");
 		return false;
 	}
 	return true;
@@ -262,16 +310,16 @@ void RealtimeView::_ReleaseVideoWriter() {
 void RealtimeView::_BufferInfoDisplay() {
 
 	int width = m_pBuffers->GetWidth();
-	std::cout << "\n\n宽度：" << width << std::endl;
+	Log(_logSink, LogLevel::Info, "宽度：", width);
 
 	int height = m_pBuffers->GetHeight();
-	std::cout << "高度：" << height << std::endl;
+	Log(_logSink, LogLevel::Info, "高度：", height);
 
 	bool ismulti = m_pBuffers->IsMultiFormat();
-	std::cout << "是否是多格式：" << ismulti << std::endl;
+	Log(_logSink, LogLevel::Info, "是否是多格式：", ismulti);
 
 	int count = m_pBuffers->GetCount();
-	std::cout << "缓冲区数量：" << count << std::endl;
+	Log(_logSink, LogLevel::Info, "缓冲区数量：", count);
 
 	const auto format = m_pBuffers->GetFormat();
 	bool a;
@@ -281,14 +329,14 @@ void RealtimeView::_BufferInfoDisplay() {
 	else {
 		a = 0;
 	}
-	std::cout << "格式（Mono8为1）：" << a << std::endl;
+	Log(_logSink, LogLevel::Info, "格式（Mono8为1）：", a);
 	int minDepth = GetPixelDepthMin(format);
 	int maxDepth = GetPixelDepthMax(format);
-	std::cout << "最小位深：" << minDepth << std::endl;
-	std::cout << "最大位深：" << maxDepth << std::endl;
+	Log(_logSink, LogLevel::Info, "最小位深：", minDepth);
+	Log(_logSink, LogLevel::Info, "最大位深：", maxDepth);
 
 	int pixelDepth = m_pBuffers->GetPixelDepth();
-	std::cout << "位深：" << format << std::endl;
+	Log(_logSink, LogLevel::Info, "位深：", pixelDepth);
 }
 
 /* 峰值对焦图层 */

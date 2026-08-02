@@ -141,6 +141,22 @@ void TestTrackerFailures() {
         "cancelled window must expose cancelled status");
 }
 
+void TestInterruptibleTrackerWait() {
+    FrameArrivalTracker tracker;
+    tracker.Reset(5, 0);
+    std::string error;
+    Expect(tracker.Arm(2, 0, error), "interruptible window should arm");
+    Expect(!tracker.WaitForTerminal(std::chrono::milliseconds(1)),
+        "short terminal wait should report no completion");
+    Expect(tracker.Snapshot().status == CaptureWindowStatus::Armed,
+        "short terminal wait must not mutate the armed window");
+    tracker.Timeout("test deadline");
+    const CaptureWindow timedOut = tracker.Snapshot();
+    Expect(timedOut.status == CaptureWindowStatus::TimedOut,
+        "explicit timeout must terminate the armed window");
+    Expect(timedOut.message == "test deadline", "explicit timeout should preserve its reason");
+}
+
 void TestOverwriteDetection() {
     FrameArrivalTracker tracker;
     tracker.Reset(5, 4);
@@ -224,6 +240,7 @@ int main() {
     TestKeyboardWindowAcrossWrap();
     TestTtlSkipAcrossWrap();
     TestTrackerFailures();
+    TestInterruptibleTrackerWait();
     TestOverwriteDetection();
     TestSapOwnedLifetime();
 

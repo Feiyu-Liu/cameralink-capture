@@ -118,6 +118,14 @@ void FrameArrivalTracker::Cancel(const std::string& reason) {
     }
 }
 
+void FrameArrivalTracker::Timeout(const std::string& reason) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_window.status == CaptureWindowStatus::Armed) {
+        Fail(CaptureWindowStatus::TimedOut, reason);
+        m_changed.notify_all();
+    }
+}
+
 bool FrameArrivalTracker::WaitForFirstEvent(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(m_mutex);
     m_changed.wait_for(lock, timeout, [this]() {
@@ -126,13 +134,16 @@ bool FrameArrivalTracker::WaitForFirstEvent(std::chrono::milliseconds timeout) {
     return m_totalEvents > m_eventsAtArm;
 }
 
-CaptureWindow FrameArrivalTracker::WaitForCompletion(std::chrono::milliseconds timeout) {
+bool FrameArrivalTracker::WaitForTerminal(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(m_mutex);
-    if (!m_changed.wait_for(lock, timeout, [this]() { return IsTerminal(); }) &&
-        m_window.status == CaptureWindowStatus::Armed) {
-        Fail(CaptureWindowStatus::TimedOut, "Timed out while waiting for the capture window.");
+    return m_changed.wait_for(lock, timeout, [this]() { return IsTerminal(); });
+}
+
+CaptureWindow FrameArrivalTracker::WaitForCompletion(std::chrono::milliseconds timeout) {
+    if (!WaitForTerminal(timeout)) {
+        Timeout("Timed out while waiting for the capture window.");
     }
-    return m_window;
+    return Snapshot();
 }
 
 CaptureWindow FrameArrivalTracker::Snapshot() const {

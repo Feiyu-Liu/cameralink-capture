@@ -202,6 +202,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="CaptureRuntime.cpp" />
     <ClCompile Include="CaptureWindow.cpp" />
     <ClCompile Include="ConfigManager.cpp" />
     <ClCompile Include="FrameBuffer.cpp" />
@@ -209,10 +210,13 @@
     <ClCompile Include="RecordFromBuffer.cpp" />
     <ClCompile Include="SaperaUse.cpp" />
     <ClCompile Include="RealtimeView.cpp" />
+    <ClCompile Include="PreviewMailbox.cpp" />
+    <ClInclude Include="CaptureRuntime.h" />
     <ClInclude Include="CaptureWindow.h" />
     <ClInclude Include="config.h" />
     <ClInclude Include="ConfigManager.h" />
     <ClInclude Include="FrameBuffer.h" />
+    <ClInclude Include="PreviewMailbox.h" />
     <ClInclude Include="RealtimeView.h" />
     <ClInclude Include="SaperaResource.h" />
   </ItemGroup>

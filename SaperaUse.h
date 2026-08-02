@@ -5,6 +5,8 @@
 
 #include <SapClassBasic.h>
 #include "CaptureWindow.h"
+#include "CaptureRuntime.h"
+#include "PreviewMailbox.h"
 
 #include <memory>
 #include <string>
@@ -21,6 +23,13 @@ public:
 
     bool CreateDevice(int grabberIndex, int deviceIndex, const char* configFilePath);  // 初始化相机
 
+    bool RunDevice(
+        int grabberIndex,
+        int deviceIndex,
+        const char* configFilePath,
+        CommandQueue& commands,
+        ILogSink* logSink,
+        IPreviewSink* previewSink);
     bool Shutdown() noexcept;
 
     // callback
@@ -35,13 +44,20 @@ private:
     int _availableGrabberCount = 0; // 可用的采集卡数
     std::vector<std::tuple<std::string, std::vector<std::string>>> _devicesInfo;  // 保存可用采集卡和可用设备名:1级：采集卡名称;2级：设备名称
 
-	float _FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo);  // 显示实时帧率
+	float _FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo, ILogSink* logSink);  // 显示实时帧率
 	float _SteadyFrameRate = 0.0f;  // 稳定帧率
 
     bool _ValidateRuntimeConfig(std::string& error) const;
     bool _StopTransfer(CameraSession& session, std::string& error) const;
-    bool _KeyToBufferRecord(CameraSession& session);
-    bool _TriggerToBufferRecord(CameraSession& session);
+    bool _RunDevice(
+        int grabberIndex,
+        int deviceIndex,
+        const char* configFilePath,
+        CommandQueue* commands,
+        ILogSink* logSink,
+        IPreviewSink* previewSink);
+    bool _KeyToBufferRecord(CameraSession& session, CommandQueue* commands);
+    bool _TriggerToBufferRecord(CameraSession& session, CommandQueue* commands);
     bool _SaveCaptureWindow(CameraSession& session, const CaptureWindow& window);
 
     std::unique_ptr<CameraSession> _session;

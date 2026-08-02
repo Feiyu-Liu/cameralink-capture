@@ -9,6 +9,9 @@
 #include <filesystem>
 #include <algorithm>
 #include <opencv2/core/utils/logger.hpp>
+#ifdef CAMERALINK_WITH_QT
+#include <QCoreApplication>
+#endif
 
 SaperaUse cam;
 
@@ -36,6 +39,10 @@ int main(int argc, char* argv[])
 {
     SetConsoleOutputCP(CP_UTF8);
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_ERROR);
+#ifdef CAMERALINK_WITH_QT
+    QCoreApplication application(argc, argv);
+    QCoreApplication::setApplicationName("CameraLink Capture");
+#endif
 
     std::string configPath;
     int cycleCount = 1;

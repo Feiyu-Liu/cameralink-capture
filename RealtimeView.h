@@ -15,6 +15,10 @@
 
 #include "config.h"
 #include "FrameBuffer.h"
+#include "CaptureRuntime.h"
+#include "PreviewMailbox.h"
+
+#include <atomic>
 
 //#include "VideoRecorder.h"
 
@@ -23,19 +27,25 @@ using namespace cv;
 class RealtimeView : public SapProcessing
 {
 public:
-	RealtimeView(SapBuffer* pBuffers, const FrameLayout& layout, SapProCallback pCallback, void* pContext);
+	enum class ControlCommand {
+		None,
+		Info,
+		StartRecording,
+		StopRecording
+	};
+
+	RealtimeView(
+		SapBuffer* pBuffers,
+		const FrameLayout& layout,
+		SapProCallback pCallback,
+		void* pContext,
+		ILogSink* logSink = nullptr,
+		IPreviewSink* previewSink = nullptr);
 	virtual ~RealtimeView();
 	bool Shutdown() noexcept;
 
-	bool IsRecording() const { return _isRecording; }
-
-	int keyControler = 0;
-	/*
-	0: 不处理
-	1: 显示buffer图像中的信息
-	2：开始录制
-	3：结束录制
-	*/
+	bool IsRecording() const noexcept { return _isRecording.load(); }
+	void SubmitControl(ControlCommand command) noexcept;
 
 protected:
 	virtual BOOL Run(); //在XferCallback中调用Execute()后执行此函数，执行完后自动调用ProCallback
@@ -53,7 +63,8 @@ private:
 
 	void _BufferInfoDisplay();
 
-	bool _isRecording = false;
+	std::atomic<bool> _isRecording { false };
+	std::atomic<ControlCommand> _pendingControl { ControlCommand::None };
 	bool _skipFrameSwitch = false;
 
     std::string _FrameSaveFolder;
@@ -75,6 +86,8 @@ private:
 	int _imageConter = 1; // 图片计数器
 	// int _bufferIdxConter = 0; // buffer计数器
 	FrameLayout _frameLayout;
+	ILogSink* _logSink = nullptr;
+	IPreviewSink* _previewSink = nullptr;
 
 };
 
