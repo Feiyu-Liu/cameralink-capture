@@ -2,17 +2,17 @@
 #include "ConfigManager.h"
 #include <opencv2/videoio.hpp>
 
-// »ñÈ¡ÅäÖÃÊµÀı
+// è·å–é…ç½®å®ä¾‹
 #define CONFIG ConfigManager::getInstance()
 
-// ±àÂëÆ÷Ó³Éä
+// ç¼–ç å™¨æ˜ å°„
 inline int GetEncoder(const std::string& encoderName) {
     if (encoderName == "H264") return cv::VideoWriter::fourcc('H', '2', '6', '4'); // MP4
-    if (encoderName == "HEVC") return cv::VideoWriter::fourcc('H', 'E', 'V', '1'); // ÎŞ·¨³ÖĞøĞ´Èë
+    if (encoderName == "HEVC") return cv::VideoWriter::fourcc('H', 'E', 'V', '1'); // æ— æ³•æŒç»­å†™å…¥
     if (encoderName == "MJPG") return cv::VideoWriter::fourcc('M', 'J', 'P', 'G'); // avi
-    if (encoderName == "YUYV") return cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V'); 
+    if (encoderName == "YUYV") return cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V');
     if (encoderName == "AZPR") return cv::VideoWriter::fourcc('A', 'Z', 'P', 'R');
-    return cv::VideoWriter::fourcc('H', '2', '6', '4'); // Ä¬ÈÏÊ¹ÓÃH264
+    return cv::VideoWriter::fourcc('H', '2', '6', '4'); // é»˜è®¤ä½¿ç”¨H264
 }
 
 inline int GetCvFormat(int depth) {
@@ -24,11 +24,11 @@ inline int GetCvFormat(int depth) {
     }
 }
 /*
-¿ì½İ¼üËµÃ÷£º
-q£ºÍË³ö³ÌĞò
-g£º¿ªÊ¼²¶»ñ»­Ãæ
-p£ºÔİÍ£²¶»ñ»­Ãæ
-i£ºÏÔÊ¾Í¼ÏñĞÅÏ¢
-r£º¿ªÊ¼Â¼ÖÆ
-s£ºÍ£Ö¹Â¼ÖÆ
+å¿«æ·é”®è¯´æ˜ï¼š
+qï¼šé€€å‡ºç¨‹åº
+gï¼šå¼€å§‹æ•è·ç”»é¢
+pï¼šæš‚åœæ•è·ç”»é¢
+iï¼šæ˜¾ç¤ºå›¾åƒä¿¡æ¯
+rï¼šå¼€å§‹å½•åˆ¶
+sï¼šåœæ­¢å½•åˆ¶
 */

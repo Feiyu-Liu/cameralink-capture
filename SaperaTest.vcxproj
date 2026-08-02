@@ -153,6 +153,8 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>.\SaperaSDK\Common;.\SaperaSDK\Basic;.\SaperaSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -171,6 +173,8 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -187,6 +191,8 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -196,14 +202,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="CaptureWindow.cpp" />
     <ClCompile Include="ConfigManager.cpp" />
+    <ClCompile Include="FrameBuffer.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="RecordFromBuffer.cpp" />
     <ClCompile Include="SaperaUse.cpp" />
     <ClCompile Include="RealtimeView.cpp" />
+    <ClInclude Include="CaptureWindow.h" />
     <ClInclude Include="config.h" />
     <ClInclude Include="ConfigManager.h" />
+    <ClInclude Include="FrameBuffer.h" />
     <ClInclude Include="RealtimeView.h" />
+    <ClInclude Include="SaperaResource.h" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="SaperaSDK\Lib\Win64\SapClassBasic.lib" />

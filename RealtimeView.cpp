@@ -1,27 +1,44 @@
 #include "RealtimeView.h"
 
+#include <filesystem>
 
-RealtimeView::RealtimeView(SapBuffer* pBuffers, SapProCallback pCallback, void* pContext)
-	:SapProcessing(pBuffers, pCallback, pContext)
+
+RealtimeView::RealtimeView(SapBuffer* pBuffers, const FrameLayout& layout, SapProCallback pCallback, void* pContext)
+	:SapProcessing(pBuffers, pCallback, pContext), _frameLayout(layout)
 {
-	// ¹¹Ôìº¯Êı
+	// æ„é€ å‡½æ•°
 	keyControler = 0;
 	_imageConter = 1;
-	
+
 }
 
 RealtimeView::~RealtimeView()
 {
-	if (m_bInitOK)
-		Destroy();
+	Shutdown();
+}
+
+bool RealtimeView::Shutdown() noexcept
+{
+	bool success = true;
+	if (m_bInitOK && !Destroy()) {
+		success = false;
+	}
+	try {
+		_ReleaseVideoWriter();
+	}
+	catch (...) {
+		success = false;
+	}
+	_isRecording = false;
+	return success;
 }
 
 BOOL RealtimeView::Run()
 {
 	// float frameRate = m_pBuffers->GetFrameRate();
 	// std::cout  << frameRate << std::endl;
-	
-	int proIndex = this->GetIndex();  // ±¾ÀàµÄ»ñÈ¡Ë÷Òı·½·¨ÓëExecute/ExecuteNextÏà¹ØÁª
+
+	int proIndex = this->GetIndex();  // æœ¬ç±»çš„è·å–ç´¢å¼•æ–¹æ³•ä¸Execute/ExecuteNextç›¸å…³è”
 
 	if (keyControler != 0) {
 		switch (keyControler) {
@@ -31,7 +48,7 @@ BOOL RealtimeView::Run()
 				break;
 			case 2:
 				if (!_isRecording) {
-					// ¹¹½¨ÊÓÆµÎÄ¼şÃû
+					// æ„å»ºè§†é¢‘æ–‡ä»¶å
 					std::stringstream ss;
 					std::time_t t = std::time(0);
 					struct tm now;
@@ -39,130 +56,160 @@ BOOL RealtimeView::Run()
 					ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
 					std::string filePath = ss.str();
 
-					if (!CONFIG.getSaveAsFrameSequence()) { // Â¼ÖÆÊÓÆµ
-					
-						cv::Size frameSize(_imageWidth, _imageHeight);
+					if (!CONFIG.getSaveAsFrameSequence()) { // å½•åˆ¶è§†é¢‘
+
+						cv::Size frameSize(_frameLayout.width, _frameLayout.height);
 						_isRecording = _InitVideoWriter(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(), frameSize, false);
-							
-						std::cout << "\n\n¿ªÊ¼Á÷Ê½Â¼ÖÆ\n\n" << std::endl;
+
+						std::cout << "\n\nå¼€å§‹æµå¼å½•åˆ¶\n\n" << std::endl;
 						return TRUE;
 					}
-					else { // Â¼ÖÆĞòÁĞÖ¡
-						_FrameSaveFolder = filePath.erase(filePath.length() - 4, 4);
-
-						if (CreateDirectory(_FrameSaveFolder.c_str(), NULL)) {
-							_FrameSaveFolder.append("\\\\");
+					else { // å½•åˆ¶åºåˆ—å¸§
+						std::filesystem::path frameFolder(filePath);
+						frameFolder.replace_extension();
+						std::error_code folderError;
+						std::filesystem::create_directories(frameFolder, folderError);
+						if (folderError) {
+							std::cerr << "Failed to create directory: " << folderError.message() << std::endl;
+							return FALSE;
 						}
-						else {
-							std::cerr << "Failed to create directory. Error: " << GetLastError() << std::endl;
-						}
+						_FrameSaveFolder = frameFolder.string() + "\\";
 
 						_isRecording = true;
 						_imageConter = 1;
 
-						std::cout << "\n\n¿ªÊ¼Á÷Ê½Â¼ÖÆ(±£´æÎªĞòÁĞÖ¡)\n\n" << std::endl;
+						std::cout << "\n\nå¼€å§‹æµå¼å½•åˆ¶(ä¿å­˜ä¸ºåºåˆ—å¸§)\n\n" << std::endl;
 						return TRUE;
 					}
 				}
 				keyControler = 0;
                 break;
 			case 3:
-				if (!CONFIG.getSaveAsFrameSequence()) { // Â¼ÖÆÊÓÆµ
+				if (!CONFIG.getSaveAsFrameSequence()) { // å½•åˆ¶è§†é¢‘
                     _ReleaseVideoWriter();
 				}
 				_isRecording = false;
 				keyControler = 0;
-				std::cout << "\n\nÍ£Ö¹Á÷Ê½Â¼ÖÆ\n" << "ÒÑ±£´æÖÁ£º" << CONFIG.getSavePath() << std::endl;
+				std::cout << "\n\nåœæ­¢æµå¼å½•åˆ¶\n" << "å·²ä¿å­˜è‡³ï¼š" << CONFIG.getSavePath() << std::endl;
 				break;
 			default:
 				break;
 		}
 	}
 
-	// ´¦ÀíÍ¼Ïñ
-	void* outAddress = NULL;   // ´ÓÊä³öbuffer»ñÈ¡-½âÑ¹ËõÍ¼ÏñÊı¾İ
-	
-	m_pBuffers->GetAddress(proIndex, &outAddress);
+	MappedMono8Frame mappedFrame;
+	std::string mapError;
+	auto ensureMapped = [&]() -> bool {
+		if (mappedFrame.IsValid()) {
+			return true;
+		}
+		if (!mappedFrame.Map(*m_pBuffers, proIndex, _frameLayout, mapError)) {
+			std::cerr << "Frame mapping failed: " << mapError << std::endl;
+			return false;
+		}
+		return true;
+	};
 	// std::cout << proIndex << std::endl;
 	// GetFormat\GetPixelDepth\GetBytesPerPixel\GetPitch
-	// CV_8UC1¶ÔÓ¦SapFormatMono8
-	// 
+	// CV_8UC1å¯¹åº”SapFormatMono8
+	//
 	/*
-	if (_isRecording) { 
+	if (_isRecording) {
 		cv::Mat image(_imageHeight, _imageWidth, CV_8UC1, outAddress);
 		_WriteFrame(image);
 	}
 	*/
-	// Á÷Ê½Â¼ÖÆ
+	// æµå¼å½•åˆ¶
 	if (_isRecording) {
 		if (!CONFIG.getSaveAsFrameSequence()) {
-			cv::Mat image(_imageHeight, _imageWidth, CONFIG.getCvPixelFormat(), outAddress);
-			_WriteFrame(image);
+			if (!ensureMapped() || !_WriteFrame(mappedFrame.Image())) {
+				std::cerr << "Streaming recording stopped because a frame could not be written." << std::endl;
+				_ReleaseVideoWriter();
+				_isRecording = false;
+				return FALSE;
+			}
 		}
 		else {
 			std::stringstream ss;
 			ss << _FrameSaveFolder << std::setw(4) << std::setfill('0') << _imageConter << ".bmp";
 			std::string filePath = ss.str();
-			m_pBuffers->Save(filePath.c_str(), "-format bmp", proIndex, 1);
+			try {
+				if (!ensureMapped() || !cv::imwrite(filePath, mappedFrame.Image())) {
+					std::cerr << "Failed to save frame: " << filePath << std::endl;
+					_isRecording = false;
+					return FALSE;
+				}
+			}
+			catch (const cv::Exception& exception) {
+				std::cerr << "Failed to save frame: " << filePath << std::endl;
+				std::cerr << exception.what() << std::endl;
+				_isRecording = false;
+				return FALSE;
+			}
 			_imageConter += 1;
 		}
 	}
 
 
-	if (_isRecording && CONFIG.getPauseView()) { // Â¼ÖÆÊ±²»ÏÔÊ¾»­Ãæ
+	if (_isRecording && CONFIG.getPauseView()) { // å½•åˆ¶æ—¶ä¸æ˜¾ç¤ºç”»é¢
 		return TRUE;
 	}
-	else { // ÊµÊ±Ô¤ÀÀ
-		// ÌøÖ¡ÏÔÊ¾¼õÉÙ×ÊÔ´Õ¼ÓÃ
+	else { // å®æ—¶é¢„è§ˆ
+		// è·³å¸§æ˜¾ç¤ºå‡å°‘èµ„æºå ç”¨
 		if (_skipFrameSwitch) {
 			_skipFrameSwitch = false;
 			return TRUE;
 		} else {
 			_skipFrameSwitch = true;
 		}
-		
-		_imageWidth = m_pBuffers->GetWidth();
-		_imageHeight = m_pBuffers->GetHeight();
-		float scale = CONFIG.getViewerScale();
-		cv::Mat image(_imageHeight, _imageWidth, GetCvFormat(CONFIG.getCvPixelFormat()), outAddress);
-		
+
+		double scale = CONFIG.getViewerScale();
+		if (!ensureMapped()) {
+			return FALSE;
+		}
+		cv::Mat image = mappedFrame.Image();
+
 		if (CONFIG.getFocusPeakingLayer() || CONFIG.getHistLayer() || CONFIG.getMotionDetectorLayer()) {
 			cv::Mat viewImage;
-			cv::cvtColor(image, viewImage, cv::COLOR_GRAY2BGR); // ÑÕÉ«¸ñÊ½×ª»»£¬ÒÔ±ãµş¼ÓÏÔÊ¾
+			cv::cvtColor(image, viewImage, cv::COLOR_GRAY2BGR); // é¢œè‰²æ ¼å¼è½¬æ¢ï¼Œä»¥ä¾¿å åŠ æ˜¾ç¤º
 			if (CONFIG.getFocusPeakingLayer()) {
-				cv::Mat focusPeakingLayer = _FocusPeakingLayer(image); // ·åÖµ¶Ô½¹Í¼²ã
+				cv::Mat focusPeakingLayer = _FocusPeakingLayer(image); // å³°å€¼å¯¹ç„¦å›¾å±‚
 				cv::add(viewImage, focusPeakingLayer, viewImage);
 			}
 
 			if (CONFIG.getHistLayer()) {
-				cv::Mat hisLayer = _HistLayer(image); // Ö±·½Í¼Í¼²ã
+				cv::Mat hisLayer = _HistLayer(image); // ç›´æ–¹å›¾å›¾å±‚
 				cv::add(viewImage, hisLayer, viewImage);
 			}
 
 			if (CONFIG.getMotionDetectorLayer()) {
 				bool isMotionDetected;
-				cv::Mat motionLayer = _MotionDetectorLayer(isMotionDetected, this->_lastFrame, image, false, 3000); // ÔË¶¯¼ì²âÍ¼²ã
+				cv::Mat motionLayer = _MotionDetectorLayer(isMotionDetected, this->_lastFrame, image, false, 3000); // è¿åŠ¨æ£€æµ‹å›¾å±‚
 				cv::add(viewImage, motionLayer, viewImage);
-				this->_lastFrame = image; // ±£´æÉÏÒ»Ö¡Í¼Ïñ
+				this->_lastFrame = image.clone(); // è·¨å›è°ƒä¿å­˜å¿…é¡»æ‹¥æœ‰å›¾åƒæ•°æ®
 				// std::cout << isMotionDetected << std::endl;
 			}
 
 			if (scale != 1) {
-				cv::resize(viewImage, viewImage, cv::Size(image.cols * scale, image.rows * scale)); // scale 
+				cv::resize(viewImage, viewImage, cv::Size(
+					static_cast<int>(image.cols * scale),
+					static_cast<int>(image.rows * scale))); // scale
 			}
 			cv::imshow("Captured Frame", viewImage);
 			cv::waitKey(CONFIG.getCvWaitKey());
 			return TRUE;
 		} else {
 			if (scale != 1) {
-				cv::resize(image, image, cv::Size(image.cols * scale, image.rows * scale)); // scale 
+				cv::resize(image, image, cv::Size(
+					static_cast<int>(image.cols * scale),
+					static_cast<int>(image.rows * scale))); // scale
 			}
 			cv::imshow("Captured Frame", image);
 			cv::waitKey(CONFIG.getCvWaitKey());
 			return TRUE;
 		}
 	}
-	
+
 }
 
 
@@ -177,13 +224,14 @@ bool RealtimeView::_InitVideoWriter(const std::string& filename, int codec, doub
 }
 
 
-void RealtimeView::_WriteFrame(const cv::Mat& frame)
+bool RealtimeView::_WriteFrame(const cv::Mat& frame)
 {
 	if (!_videoWriter.isOpened()) {
-		throw std::runtime_error("Error: Video writer is not initialized.");
+		return false;
 	}
 
 	_videoWriter.write(frame);
+	return true;
 }
 
 void RealtimeView::_ReleaseVideoWriter() {
@@ -214,16 +262,16 @@ void RealtimeView::_ReleaseVideoWriter() {
 void RealtimeView::_BufferInfoDisplay() {
 
 	int width = m_pBuffers->GetWidth();
-	std::cout << "\n\n¿í¶È£º" << width << std::endl;
+	std::cout << "\n\nå®½åº¦ï¼š" << width << std::endl;
 
 	int height = m_pBuffers->GetHeight();
-	std::cout << "¸ß¶È£º" << height << std::endl;
+	std::cout << "é«˜åº¦ï¼š" << height << std::endl;
 
 	bool ismulti = m_pBuffers->IsMultiFormat();
-	std::cout << "ÊÇ·ñÊÇ¶à¸ñÊ½£º" << ismulti << std::endl;
+	std::cout << "æ˜¯å¦æ˜¯å¤šæ ¼å¼ï¼š" << ismulti << std::endl;
 
 	int count = m_pBuffers->GetCount();
-	std::cout << "»º³åÇøÊıÁ¿£º" << count << std::endl;
+	std::cout << "ç¼“å†²åŒºæ•°é‡ï¼š" << count << std::endl;
 
 	const auto format = m_pBuffers->GetFormat();
 	bool a;
@@ -233,24 +281,24 @@ void RealtimeView::_BufferInfoDisplay() {
 	else {
 		a = 0;
 	}
-	std::cout << "¸ñÊ½£¨Mono8Îª1£©£º" << a << std::endl;
+	std::cout << "æ ¼å¼ï¼ˆMono8ä¸º1ï¼‰ï¼š" << a << std::endl;
 	int minDepth = GetPixelDepthMin(format);
 	int maxDepth = GetPixelDepthMax(format);
-	std::cout << "×îĞ¡Î»Éî£º" << minDepth << std::endl;
-	std::cout << "×î´óÎ»Éî£º" << maxDepth << std::endl;
+	std::cout << "æœ€å°ä½æ·±ï¼š" << minDepth << std::endl;
+	std::cout << "æœ€å¤§ä½æ·±ï¼š" << maxDepth << std::endl;
 
 	int pixelDepth = m_pBuffers->GetPixelDepth();
-	std::cout << "Î»Éî£º" << format << std::endl;
+	std::cout << "ä½æ·±ï¼š" << format << std::endl;
 }
 
-/* ·åÖµ¶Ô½¹Í¼²ã */
+/* å³°å€¼å¯¹ç„¦å›¾å±‚ */
 cv::Mat RealtimeView::_FocusPeakingLayer(const cv::Mat& frame)
 {
-	// Í¼ÏñÆ½»¬
+	// å›¾åƒå¹³æ»‘
 	cv::Mat imgBlur;
-	cv::GaussianBlur(frame, imgBlur, cv::Size(5, 5), 1.5); //Ïà¹Ø²ÎÊıÔÚÀàÖĞ¶¨Òå
+	cv::GaussianBlur(frame, imgBlur, cv::Size(5, 5), 1.5); //ç›¸å…³å‚æ•°åœ¨ç±»ä¸­å®šä¹‰
 
-	// ±ßÔµ¼ì²â
+	// è¾¹ç¼˜æ£€æµ‹
 	cv::Mat edges;
 	cv::Canny(imgBlur, edges, 50, 150);
 
@@ -261,20 +309,20 @@ cv::Mat RealtimeView::_FocusPeakingLayer(const cv::Mat& frame)
 }
 
 
-/* Ö±·½Í¼ÏÔÊ¾*/
+/* ç›´æ–¹å›¾æ˜¾ç¤º*/
 cv::Mat RealtimeView::_HistLayer(const cv::Mat& frame)
 {
-	// ²ÎÊı¶¨Òå
-	int grayImgNum = 1; //Í¼ÏñÊı
-	int grayChannels = 0; //ĞèÒª¼ÆËãµÄÍ¨µÀºÅ µ¥Í¨µÀÖ»ÓĞ0
-	const int grayHistDim = 1; //Ö±·½Í¼Î¬Êı
-	const int grayHistSize = 256; //Ö±·½Í¼Ã¿Ò»Î¬¶Èbin¸öÊı
-	float grayRanges[2] = { 0, 255 };  //»Ò¶ÈÖµµÄÍ³¼Æ·¶Î§
-	const float* grayHistRanges[1] = { grayRanges }; //»Ò¶ÈÖµÍ³¼Æ·¶Î§Ö¸Õë                     
+	// å‚æ•°å®šä¹‰
+	int grayImgNum = 1; //å›¾åƒæ•°
+	int grayChannels = 0; //éœ€è¦è®¡ç®—çš„é€šé“å· å•é€šé“åªæœ‰0
+	const int grayHistDim = 1; //ç›´æ–¹å›¾ç»´æ•°
+	const int grayHistSize = 256; //ç›´æ–¹å›¾æ¯ä¸€ç»´åº¦binä¸ªæ•°
+	float grayRanges[2] = { 0, 255 };  //ç°åº¦å€¼çš„ç»Ÿè®¡èŒƒå›´
+	const float* grayHistRanges[1] = { grayRanges }; //ç°åº¦å€¼ç»Ÿè®¡èŒƒå›´æŒ‡é’ˆ
 
-	cv::Mat grayHist; 
+	cv::Mat grayHist;
 
-	//¼ÆËã»Ò¶ÈÍ¼ÏñµÄÖ±·½Í¼
+	//è®¡ç®—ç°åº¦å›¾åƒçš„ç›´æ–¹å›¾
 	cv::calcHist(&frame,
 		grayImgNum,
 		&grayChannels,
@@ -283,19 +331,19 @@ cv::Mat RealtimeView::_HistLayer(const cv::Mat& frame)
 		grayHistDim,
 		&grayHistSize,
 		grayHistRanges,
-		true,  //ÊÇ·ñ¾ùÔÈ
-		false); //ÊÇ·ñÀÛ»ı
+		true,  //æ˜¯å¦å‡åŒ€
+		false); //æ˜¯å¦ç´¯ç§¯
 
 	int frameWidth = frame.cols;
 	int frameHeight = frame.rows;
 
-	
-	int grayScale = 2;  //¿í´óĞ¡
-	int histHeight = static_cast<int>(frameHeight/4); //¸ß¶È
-	int histWidth = histHeight * grayScale; //¿í¶È
-	int binHeight = static_cast<int>(histHeight*7/8);  //binµÄ×î´ó¸ß¶È
 
-	// Ö±·½Í¼µÄÍ¼Æ¬£¬³õÊ¼È«ÏñËØÖµÎª0
+	int grayScale = 2;  //å®½å¤§å°
+	int histHeight = static_cast<int>(frameHeight/4); //é«˜åº¦
+	int histWidth = histHeight * grayScale; //å®½åº¦
+	int binHeight = static_cast<int>(histHeight*7/8);  //binçš„æœ€å¤§é«˜åº¦
+
+	// ç›´æ–¹å›¾çš„å›¾ç‰‡ï¼Œåˆå§‹å…¨åƒç´ å€¼ä¸º0
 	//cv::Mat grayHistImg(histHeight, histWidth, CV_8UC1, cv::Scalar(0));
 	cv::Mat grayHistImg = cv::Mat::zeros(histHeight, histWidth, CV_8UC1);
 
@@ -303,24 +351,24 @@ cv::Mat RealtimeView::_HistLayer(const cv::Mat& frame)
 	double grayMinValue = 0;
 	cv::minMaxLoc(grayHist, &grayMinValue, &grayMaxValue, NULL, NULL);
 
-	// Ö±·½Í¼»æÖÆ
+	// ç›´æ–¹å›¾ç»˜åˆ¶
 	for (size_t i = 0; i < grayHistSize; i++)
 	{
-		float bin_val = grayHist.at<float>(i);
-		//cvRound·µ»Ø¸ú²ÎÊı×î½Ó½üµÄÕûÊıÖµ£¬¼´ËÄÉáÎåÈë
+		float bin_val = grayHist.at<float>(static_cast<int>(i));
+		//cvRoundè¿”å›è·Ÿå‚æ•°æœ€æ¥è¿‘çš„æ•´æ•°å€¼ï¼Œå³å››èˆäº”å…¥
 		int intensity = cvRound(bin_val * binHeight / grayMaxValue);
 
-		// »æÖÆÖ±Ïß ÕâÀïÓÃÃ¿scaleÌõÊúÏòÖ±Ïß´ú±íÒ»¸öbin
+		// ç»˜åˆ¶ç›´çº¿ è¿™é‡Œç”¨æ¯scaleæ¡ç«–å‘ç›´çº¿ä»£è¡¨ä¸€ä¸ªbin
 		for (size_t j = 0; j < grayScale; j++)
 		{
 			cv::line(grayHistImg,
-				cv::Point(i * grayScale + j, histHeight - intensity),
-				cv::Point(i * grayScale + j, histHeight - 1),
+				cv::Point(static_cast<int>(i * grayScale + j), histHeight - intensity),
+				cv::Point(static_cast<int>(i * grayScale + j), histHeight - 1),
 				255);
 		}
 
 	}
-	
+
 	/*
 	cv::Mat colorHistImg;
 	cv::cvtColor(grayHistImg, colorHistImg, cv::COLOR_GRAY2BGR);
@@ -331,26 +379,26 @@ cv::Mat RealtimeView::_HistLayer(const cv::Mat& frame)
 	cv::cvtColor(grayHistImg, colorHistImg, cv::COLOR_GRAY2BGR);
 	cv::addWeighted(background, 1.0, colorHistImg, 1.0, 0.0, colorHistImg);
 	*/
-	
-	// »Ò¶ÈÖ±·½Í¼×ª»»Îª²ÊÉ«²¢µş¼Ó±³¾°
+
+	// ç°åº¦ç›´æ–¹å›¾è½¬æ¢ä¸ºå½©è‰²å¹¶å åŠ èƒŒæ™¯
 	cv::Mat colorHistImg = cv::Mat::zeros(grayHistImg.size(), CV_8UC3);
-	colorHistImg.setTo(cv::Scalar(255, 0, 0), grayHistImg);  // ÏßÌõ
+	colorHistImg.setTo(cv::Scalar(255, 0, 0), grayHistImg);  // çº¿æ¡
 
 	cv::Mat background = cv::Mat::zeros(frame.size(), CV_8UC3);
 
-	//roi Êµ¼ÊÉÏÊÇ background µÄÒ»¸öÊÓÍ¼£¨»òÒıÓÃ£©£¬Ëü²¢²»´´½¨Ò»¸öĞÂµÄÍ¼Ïñ£¬¶øÊÇÖ±½ÓÒıÓÃÁË background µÄÄ³¸öÇøÓò
+	//roi å®é™…ä¸Šæ˜¯ background çš„ä¸€ä¸ªè§†å›¾ï¼ˆæˆ–å¼•ç”¨ï¼‰ï¼Œå®ƒå¹¶ä¸åˆ›å»ºä¸€ä¸ªæ–°çš„å›¾åƒï¼Œè€Œæ˜¯ç›´æ¥å¼•ç”¨äº† background çš„æŸä¸ªåŒºåŸŸ
 	cv::Mat roi = background(cv::Rect(frameWidth- histWidth, 0, histWidth, histHeight));
 
-	//µ±¶Ô roi ½øĞĞĞŞ¸ÄÊ±£¬Êµ¼ÊÉÏÊÇÔÚĞŞ¸Ä background µÄÏàÓ¦²¿·Ö
+	//å½“å¯¹ roi è¿›è¡Œä¿®æ”¹æ—¶ï¼Œå®é™…ä¸Šæ˜¯åœ¨ä¿®æ”¹ background çš„ç›¸åº”éƒ¨åˆ†
 	cv::add(colorHistImg, roi, roi);
 
 	return background;
 }
 
-/* ÔË¶¯¼ì²â */
+/* è¿åŠ¨æ£€æµ‹ */
 cv::Mat RealtimeView::_MotionDetectorLayer(bool& motionDetected,const cv::Mat& lastFrame, const cv::Mat& currentFrame, bool isDelta, const int minSizeMovement)
 {
-	// Èç¹ûµÚÒ»Ö¡Îª¿Õ£¬Ö±½ÓÍË³ö
+	// å¦‚æœç¬¬ä¸€å¸§ä¸ºç©ºï¼Œç›´æ¥é€€å‡º
 	if (lastFrame.empty()) {
 		cv::Mat output;
 		cvtColor(currentFrame, output, COLOR_GRAY2BGR);
@@ -358,32 +406,32 @@ cv::Mat RealtimeView::_MotionDetectorLayer(bool& motionDetected,const cv::Mat& l
 	}
 
 	//cv::Mat outputFrame = currentFrame.clone();
-	//GaussianBlur(lastFrame, lastFrame, Size(21, 21), 0); // ¸ßË¹Ä£ºıÌ«Ó°Ïì´¦ÀíËÙ¶È
+	//GaussianBlur(lastFrame, lastFrame, Size(21, 21), 0); // é«˜æ–¯æ¨¡ç³Šå¤ªå½±å“å¤„ç†é€Ÿåº¦
 	//GaussianBlur(currentFrame, currentFrame, Size(21, 21), 0);
 
-	// ±È½ÏÁ½¸öÖ¡£¬ÕÒµ½²îÒì
+	// æ¯”è¾ƒä¸¤ä¸ªå¸§ï¼Œæ‰¾åˆ°å·®å¼‚
 	Mat frameDelta;
 	absdiff(lastFrame, currentFrame, frameDelta);
 	Mat thresh;
 	threshold(frameDelta, thresh, 25, 255, THRESH_BINARY);
 
-	// Í¨¹ıÅòÕÍÌî³ä¿×¶´£¬²¢ÕÒµ½ãĞÖµµÄÂÖÀª
+	// é€šè¿‡è†¨èƒ€å¡«å……å­”æ´ï¼Œå¹¶æ‰¾åˆ°é˜ˆå€¼çš„è½®å»“
 	dilate(thresh, thresh, Mat(), Point(-1, -1), 2);
 	std::vector<std::vector<Point>> contours;
 	findContours(thresh.clone(), contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
-	// ±éÀúÂÖÀª
+	// éå†è½®å»“
 	cv::Mat boxLayer = cv::Mat::zeros(currentFrame.size(), CV_8UC3);
-	motionDetected = false; 
+	motionDetected = false;
 	for (size_t i = 0; i < contours.size(); i++) {
-		// ±£´æËùÓĞÕÒµ½µÄÂÖÀª×ø±ê
+		// ä¿å­˜æ‰€æœ‰æ‰¾åˆ°çš„è½®å»“åæ ‡
 		Rect bounding_box = boundingRect(contours[i]);
 
-		// Èç¹ûÂÖÀªÌ«Ğ¡£¬ÔòºöÂÔËü£¬·ñÔò£¬´æÔÚË²Ê±ÔË¶¯
+		// å¦‚æœè½®å»“å¤ªå°ï¼Œåˆ™å¿½ç•¥å®ƒï¼Œå¦åˆ™ï¼Œå­˜åœ¨ç¬æ—¶è¿åŠ¨
 		if (contourArea(contours[i]) > minSizeMovement) {
-			// »æÖÆ¾ØĞÎ¿ò£¬ÒÔ±ãÏÔÊ¾×ã¹»´óµÄÔË¶¯
+			// ç»˜åˆ¶çŸ©å½¢æ¡†ï¼Œä»¥ä¾¿æ˜¾ç¤ºè¶³å¤Ÿå¤§çš„è¿åŠ¨
 			rectangle(boxLayer, bounding_box.tl(), bounding_box.br(), Scalar(0, 255, 0), 3);
-			motionDetected = true; // ¼ì²âµ½ÔË¶¯
+			motionDetected = true; // æ£€æµ‹åˆ°è¿åŠ¨
 		}
 	}
 

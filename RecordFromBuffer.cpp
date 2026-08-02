@@ -1,62 +1,65 @@
 #include "RecordFromBuffer.h"
 
+#include <filesystem>
 
-RecordFromBuffer::RecordFromBuffer(SapBufferWithTrash* pBuffers)
+
+RecordFromBuffer::RecordFromBuffer(SapBufferWithTrash& buffers, const FrameLayout& layout)
+	: _buffers(buffers), _frameLayout(layout)
 {
-	_pBuffers = pBuffers;
 }
 
 RecordFromBuffer::~RecordFromBuffer()
 {
-
+	_ReleaseVideoWriter();
 }
 
 bool RecordFromBuffer::SaveVideo(const std::string& filename, int codec, double fps, int width, int height, bool isColor, int totalFrames)
 {
-	// ´´½¨ÊÓÆµĞ´ÈëÆ÷
+	// åˆ›å»ºè§†é¢‘å†™å…¥å™¨
 	cv::Size frameSize(width, height);
 	if (!_InitVideoWriter(filename, codec, fps, frameSize, isColor)) {
 		return false;
 	}
 
-	// ±éÀú»º³åÇøÊı¾İ£¬Ğ´ÈëÊÓÆµÖ¡
-	void* outAddress = NULL;   // ´ÓÊä³öbuffer»ñÈ¡-½âÑ¹ËõÍ¼ÏñÊı¾İ
-
-	// std::cout << "Ö¡×ÜÊı: " << totalFrames << std::endl;
+	// éå†ç¼“å†²åŒºæ•°æ®ï¼Œå†™å…¥è§†é¢‘å¸§
+	// std::cout << "å¸§æ€»æ•°: " << totalFrames << std::endl;
     for (int i = 0; i < totalFrames; i++) {
-		// ´Ó»º³åÇø»ñÈ¡Ò»Ö¡Í¼ÏñÊı¾İ
-		_pBuffers->GetAddress(i, &outAddress);
-		cv::Mat image(height, width, GetCvFormat(CONFIG.getCvPixelFormat()), outAddress);
-		_WriteFrame(image);
+		MappedMono8Frame frame;
+		std::string error;
+		if (!frame.Map(_buffers, i, _frameLayout, error) || !_WriteFrame(frame.Image())) {
+			_ReleaseVideoWriter();
+			return false;
+		}
 	}
 
 
-	// ÊÍ·ÅÊÓÆµĞ´ÈëÆ÷
+	// é‡Šæ”¾è§†é¢‘å†™å…¥å™¨
 	if (!_ReleaseVideoWriter()) {
 		return false;
 	}
+	return true;
 }
 
 bool RecordFromBuffer::SaveVideo(const std::string& filename, int codec, double fps, int width, int height, bool isColor, const std::vector<int>& idxArr)
 {
-	// ´´½¨ÊÓÆµĞ´ÈëÆ÷
+	// åˆ›å»ºè§†é¢‘å†™å…¥å™¨
 	cv::Size frameSize(width, height);
 	if (!_InitVideoWriter(filename, codec, fps, frameSize, isColor)) {
 		return false;
 	}
 
-	// ±éÀú»º³åÇøÊı¾İ£¬Ğ´ÈëÊÓÆµÖ¡
-	void* outAddress = NULL;   // ´ÓÊä³öbuffer»ñÈ¡-½âÑ¹ËõÍ¼ÏñÊı¾İ
-
-	// std::cout << "Ö¡×ÜÊı: " << totalFrames << std::endl;
-	for (size_t i = 0; i < idxArr.size(); i++) {  // Ê¹ÓÃ idxArr.size() À´±éÀú vector
-		// ´Ó»º³åÇø»ñÈ¡Ò»Ö¡Í¼ÏñÊı¾İ
-		_pBuffers->GetAddress(idxArr[i], &outAddress);
-		cv::Mat image(height, width, GetCvFormat(CONFIG.getCvPixelFormat()), outAddress);
-		_WriteFrame(image);
+	// éå†ç¼“å†²åŒºæ•°æ®ï¼Œå†™å…¥è§†é¢‘å¸§
+	// std::cout << "å¸§æ€»æ•°: " << totalFrames << std::endl;
+	for (size_t i = 0; i < idxArr.size(); i++) {  // ä½¿ç”¨ idxArr.size() æ¥éå† vector
+		MappedMono8Frame frame;
+		std::string error;
+		if (!frame.Map(_buffers, idxArr[i], _frameLayout, error) || !_WriteFrame(frame.Image())) {
+			_ReleaseVideoWriter();
+			return false;
+		}
 	}
 
-	// ÊÍ·ÅÊÓÆµĞ´ÈëÆ÷
+	// é‡Šæ”¾è§†é¢‘å†™å…¥å™¨
 	if (!_ReleaseVideoWriter()) {
 		return false;
 	}
@@ -64,22 +67,34 @@ bool RecordFromBuffer::SaveVideo(const std::string& filename, int codec, double 
 	return true;
 }
 
-// ±£´æÖ¡ĞòÁĞÍ¼Ïñ
+// ä¿å­˜å¸§åºåˆ—å›¾åƒ
 bool RecordFromBuffer::SaveFrames(const std::string& fileFolder, const std::vector<int>& idxArr) {
 
 	int imageConter = 1;
-	for (size_t i = 0; i < idxArr.size(); i++) {  // Ê¹ÓÃ idxArr.size() À´±éÀú vector
-		std::stringstream ss;
-		ss << fileFolder << std::setw(4) << std::setfill('0') << imageConter << ".bmp";
-		std::string fileName = ss.str();
-		_pBuffers->Save(fileName.c_str(), "-format bmp", idxArr[i], 0);
+	for (size_t i = 0; i < idxArr.size(); i++) {  // ä½¿ç”¨ idxArr.size() æ¥éå† vector
+		std::stringstream name;
+		name << std::setw(4) << std::setfill('0') << imageConter << ".bmp";
+		const std::string fileName = (std::filesystem::path(fileFolder) / name.str()).string();
+		MappedMono8Frame frame;
+		std::string error;
+		if (!frame.Map(_buffers, idxArr[i], _frameLayout, error)) {
+			return false;
+		}
+		try {
+			if (!cv::imwrite(fileName, frame.Image())) {
+				return false;
+			}
+		}
+		catch (const cv::Exception&) {
+			return false;
+		}
 		imageConter += 1;
 	}
 
 	return true;
 }
 
-// ²»ÉèÖÃÂëÂÊ
+// ä¸è®¾ç½®ç ç‡
 bool RecordFromBuffer::_InitVideoWriter(const std::string& filename, int codec, double fps, const cv::Size& frameSize, bool isColor)
 {
 	_videoWriter.open(filename, codec, fps, frameSize, isColor);

@@ -1,533 +1,670 @@
 #include "SaperaUse.h"
 
-SaperaUse::SaperaUse()
-{
+#include "RealtimeView.h"
+#include "RecordFromBuffer.h"
+#include "SaperaResource.h"
+#include "config.h"
 
+#include <conio.h>
+#include <windows.h>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <ctime>
+#include <filesystem>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <sstream>
+#include <thread>
+
+namespace {
+
+std::chrono::milliseconds CaptureTimeout(int frameCount, int frameRate) {
+    const auto expectedMilliseconds =
+        static_cast<std::int64_t>(frameCount) * 1000 / std::max(frameRate, 1);
+    return std::chrono::milliseconds(std::max<std::int64_t>(5000, expectedMilliseconds * 3 + 2000));
 }
 
-SaperaUse::~SaperaUse()
-{
-    // 退出相机
+std::string BuildOutputPath() {
+    std::stringstream stream;
+    const std::time_t timestamp = std::time(nullptr);
+    struct tm localTime {};
+    localtime_s(&localTime, &timestamp);
+    stream << CONFIG.getSavePath()
+           << CONFIG.getVideoPrefix()
+           << std::put_time(&localTime, "%Y%m%dT%H%M%S")
+           << CONFIG.getVideoExt();
+    return stream.str();
 }
 
-
-bool SaperaUse::GrabbersInit()
-{
-    // 获取系统中的采集卡数量
-    int grabberCount = SapManager::GetServerCount();
-    if (grabberCount == 0)
-    {
-        this->_errorStaus = 0; //no grabber found
-        return false;
+void PrintCleanupError(const char* operation) noexcept {
+    try {
+        std::cerr << "Cleanup failed: " << operation << std::endl;
     }
+    catch (...) {
+    }
+}
 
-    // 遍历系统中的采集卡，找到支持采集的板卡及支持的设备
-    bool serverFound = false;
-    std::ostringstream oss;
-    int tempCount = 0; 
-    for (int serverIndex = 0; serverIndex < grabberCount; serverIndex++)
-    {
-        // 检查采集卡是否可用
-        if (SapManager::GetResourceCount(serverIndex, SapManager::ResourceAcq) != 0)
-        {
-            // 获取采集卡名称
-            tempCount += 1;
-            char serverName[CORSERVER_MAX_STRLEN];
-            SapManager::GetServerName(serverIndex, serverName, sizeof(serverName));
-            oss << serverName;
+bool ValidateCcfStructure(const char* path, std::string& error) {
+    struct RequiredEntry {
+        const char* section;
+        const char* key;
+    };
+    constexpr std::array<RequiredEntry, 7> requiredEntries {{
+        { "Board", "Server Name" },
+        { "Board", "Device Name" },
+        { "General", "Version" },
+        { "Output", "Output Format" },
+        { "Signal Description", "Pixel Depth" },
+        { "Stream Conditioning", "Crop Width" },
+        { "Stream Conditioning", "Crop Height" }
+    }};
 
-            // 获取设备名称
-            int deviceCount = SapManager::GetResourceCount(serverName, SapManager::ResourceAcq);
-
-            std::vector<std::string> devicesName;
-            for (int deviceIndex = 0; deviceIndex < deviceCount; deviceIndex++)
-            {
-                char deviceName[CORPRM_GETSIZE(CORACQ_PRM_LABEL)];
-                SapManager::GetResourceName(serverName, SapManager::ResourceAcq, deviceIndex, deviceName, sizeof(deviceName));
-                devicesName.push_back(deviceName);
-            }
-            this->_devicesInfo.emplace_back(serverName, devicesName);
-
-            oss.str("");
-            oss.clear();
-            serverFound = true;
+    std::array<char, 256> value {};
+    for (const RequiredEntry& entry : requiredEntries) {
+        value.fill('\0');
+        if (GetPrivateProfileStringA(
+                entry.section,
+                entry.key,
+                "",
+                value.data(),
+                static_cast<DWORD>(value.size()),
+                path) == 0) {
+            error = std::string("CCF is missing [") + entry.section + "] " + entry.key + '.';
+            return false;
         }
     }
 
-    this->_availableGrabberCount = tempCount;
-    if (!serverFound) // 至少有一个采集卡必须可用
-    {
-        this->_errorStaus = 1; // no grabbers is available
+    const int width = GetPrivateProfileIntA("Stream Conditioning", "Crop Width", 0, path);
+    const int height = GetPrivateProfileIntA("Stream Conditioning", "Crop Height", 0, path);
+    if (width <= 0 || height <= 0) {
+        error = "CCF crop width and height must be positive.";
         return false;
     }
-
+    error.clear();
     return true;
 }
 
-bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* configFilePath)
-{
-    /* 初始化采集对象 */
-    if (this->_availableGrabberCount <= 0)
-    {
-        this->_errorStaus = 1; // no grabber available, 退出
-        return false;
+} // namespace
+
+struct SaperaUse::CameraSession {
+    SapOwned<SapAcquisition> acquisition;
+    SapOwned<SapBufferWithTrash> buffers;
+    std::unique_ptr<RealtimeView> processor;
+    SapOwned<SapTransfer> transfer;
+    FrameLayout frameLayout;
+    FrameArrivalTracker tracker;
+
+    ~CameraSession() noexcept {
+        Close();
     }
 
-    // 获取采集卡名
-    auto& deviceInfo = _devicesInfo[grabberIndex];
-    std::string grabberName = std::get<0>(deviceInfo);
+    bool Close() noexcept {
+        bool success = true;
 
-    SapLocation loc(grabberName.c_str(), deviceIndex);
-
-    // 源传输节点
-    SapAcquisition* Acq = new SapAcquisition(loc, configFilePath);
-
-    /*缓冲对象可用作目标传输节点，允许从源节点（如采集或另一个缓冲区）传输数据到缓冲区资源。
-     它还可以用作源传输节点，允许将数据从一个缓冲区资源转移到另一个缓冲区
-    */ 
-    SapBufferWithTrash* Buffers = new SapBufferWithTrash(2, Acq);
-    if (CONFIG.getRecordMode() == 1) { // 自由录制
-        Buffers->SetCount(CONFIG.getBufferCount());
-    }
-    else if (CONFIG.getRecordMode() == 2) { // 固定时长录制
-        Buffers->SetCount(CONFIG.getRecordFrame()+CONFIG.getBufferOverflow());
-        std::cout << "预估录制时长(s)：" << CONFIG.getRecordFrame() / CONFIG.getFrameRate() << std::endl;
-    }
-    
-    /*SapView类包括在窗口中显示SapBuffer对象资源的功能。它允许您显示当前缓冲区资源、
-    特定资源或尚未显示的下一个资源。内部线程实时优化缓冲区显示。这使得主应用程序线程可
-    以执行而不必担心显示任务。自动清空机制允许SapView和SapTransfer对象之间同步，以
-    便实时显示缓冲区，不会丢失任何数据。 SapHwndDesktop/SapHwndAutomatic
-    */
-    //SapView* View = new SapView(Buffers, SapHwndAutomatic);
-    SapView* View = new SapView(Buffers);
-
-    /*实时处理层*/
-    RealtimeView* Pro = new RealtimeView(Buffers, ProCallback, NULL);
-
-    /*SapTransfer类实现了管理通用传输过程功能，即从一个源节点向目标节点传输数据的操作。
-    所有继承自SapXferNode类的以下类都被视为传输节点：
-    */
-    SapTransfer* Xfer = new SapAcqToBuf(Acq, Buffers, this->XferCallback, Pro);
-    
-    /*实例化非流式录制器*/
-    RecordFromBuffer *bufferRecorder = new RecordFromBuffer(Buffers);
-
-
-    /* 创建对象 */
-    if (!Acq->Create()) {
-        this->_errorStaus = 2; // fail to creat an acquisition object
-        return false;
-    }
-    if (!Buffers->Create()) {
-        this->_errorStaus = 3; // fail to creat buffter
-        return false;
-    }
-    if (!View->Create()) {
-        this->_errorStaus = 5; // fail to creat view
-        return false;
-    }
-    if (!Pro->Create()) {
-        this->_errorStaus = 6; // fail to creat process
-        return false;
-    }
-    if (Xfer && !Xfer->Create()) {
-        this->_errorStaus = 4; // fail to creat Xfer
-        return false;
-    }
-
-
-    // Start continous grab
-    Xfer->Grab();
-    
-    SapXferFrameRateInfo* pFrameRateInfo = Xfer->GetFrameRateStatistics(); // 获取帧率信息
-
-    bool isQuit = false;
-    int recBeginBufferIdx = 0;
-    while (1) {
-        // 帧率监测 
-        _FrameRateDisp(pFrameRateInfo);
-        
-        // trigger非流式录制
-        if (_isTriggerToRecording) {
-			bool res = _TriggerToBufferRecord(Buffers);
-            if (!res) {
-                if (Xfer->IsGrabbing()) {
-                    Xfer->Freeze();
-                };
-                if (!Xfer->Wait(5000)) {
-                    printf("Grab could not stop properly.\n");
+        if (transfer && static_cast<bool>(*transfer)) {
+            if (transfer->IsGrabbing()) {
+                if (!transfer->Freeze()) {
+                    PrintCleanupError("SapTransfer::Freeze");
+                    success = false;
                 }
-                // 关闭触发
-                Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, 1, 1);
+                if (!transfer->Wait(5000)) {
+                    PrintCleanupError("SapTransfer::Wait");
+                    success = false;
+                    if (!transfer->Abort() || !transfer->Wait(5000)) {
+                        PrintCleanupError("SapTransfer::Abort/Wait");
+                    }
+                }
+            }
+        }
 
+        // Constructor callbacks are unregistered by Destroy(); UnregisterCallback()
+        // only applies to extended events added through RegisterCallback().
+        if (!transfer.Destroy()) {
+            PrintCleanupError("SapTransfer::Destroy");
+            success = false;
+        }
+        transfer.Reset();
 
-                // 继续捕获
-                Xfer->Grab();
+        if (processor) {
+            if (!processor->Shutdown()) {
+                PrintCleanupError("RealtimeView::Shutdown");
+                success = false;
+            }
+            processor.reset();
+        }
 
-                _isTriggerToRecording = false; // 结束录制
+        if (!buffers.Destroy()) {
+            PrintCleanupError("SapBuffer::Destroy");
+            success = false;
+        }
+        buffers.Reset();
 
-                std::cout << "停止trigger录制" << std::endl;
+        if (!acquisition.Destroy()) {
+            PrintCleanupError("SapAcquisition::Destroy");
+            success = false;
+        }
+        acquisition.Reset();
+        return success;
+    }
+};
+
+SaperaUse::SaperaUse() = default;
+
+SaperaUse::~SaperaUse() {
+    Shutdown();
+}
+
+bool SaperaUse::Shutdown() noexcept {
+    _isTriggerToRecording = false;
+    if (!_session) {
+        return true;
+    }
+    const bool success = _session->Close();
+    _session.reset();
+    return success;
+}
+
+bool SaperaUse::GrabbersInit() {
+    _devicesInfo.clear();
+    _availableGrabberCount = 0;
+
+    const int grabberCount = SapManager::GetServerCount();
+    if (grabberCount == 0) {
+        _errorStaus = 0;
+        return false;
+    }
+
+    for (int serverIndex = 0; serverIndex < grabberCount; ++serverIndex) {
+        if (SapManager::GetResourceCount(serverIndex, SapManager::ResourceAcq) == 0) {
+            continue;
+        }
+
+        char serverName[CORSERVER_MAX_STRLEN] {};
+        if (!SapManager::GetServerName(serverIndex, serverName, sizeof(serverName))) {
+            continue;
+        }
+
+        const int deviceCount = SapManager::GetResourceCount(serverName, SapManager::ResourceAcq);
+        std::vector<std::string> deviceNames;
+        deviceNames.reserve(deviceCount);
+        for (int deviceIndex = 0; deviceIndex < deviceCount; ++deviceIndex) {
+            char deviceName[CORPRM_GETSIZE(CORACQ_PRM_LABEL)] {};
+            if (SapManager::GetResourceName(
+                    serverName,
+                    SapManager::ResourceAcq,
+                    deviceIndex,
+                    deviceName,
+                    sizeof(deviceName))) {
+                deviceNames.emplace_back(deviceName);
             }
             else {
-                continue; // 跳过整个循环
+                deviceNames.emplace_back("<unknown>");
             }
         }
+        _devicesInfo.emplace_back(serverName, std::move(deviceNames));
+    }
 
-        // 监测键盘事件
-        if (_kbhit() != 0) {  
-            char k = _getch();
-            switch (k) {
-                case 'q': case 'Q':
-                    isQuit = 1;
-                    break;
-                case 'g': case 'G':
-                    if (_isTriggerToRecording) {
-                        break;
-                    }
-                    if (Xfer->IsGrabbing()) {
-                        break;
-                    }
-                    Xfer->Grab();
-                    std::cout << "\n\n开始捕获\n\n" << std::endl;
-                    break;
-                case 'p': case 'P':
-                    if (_isTriggerToRecording) {
-                        break;
-                    }
-                    if (!Xfer->IsGrabbing()) {
-                        break;
-                    }
-                    Xfer->Freeze();
-                    std::cout << "\n\n暂停捕获\n\n" << std::endl;
-                    break;
-                case 'i': case 'I':
-                    Pro->keyControler = 1; // 显示信息
-                    break;
-                case 'r': case 'R':
-                    if (CONFIG.getRecordMode() == 1) {  // 开始流式录制
-                        Pro->keyControler = 2; 
-                        break;
-                    } else if (CONFIG.getRecordMode() == 2 && !_isKeyToRecording) { // 开始非流式录制
-                        int triggerMode = CONFIG.getTriigerMode();
-                        if (triggerMode == 0) { // 键盘触发
-                            recBeginBufferIdx = Buffers->GetIndex(); // 获取当前帧缓冲区索引
-                            if (!Xfer->IsGrabbing()) {
-                                std::cout << "\n\n未开始录制，请开启画面捕获\n\n" << std::endl;
-                                break;
-                            };
-                            _isKeyToRecording = true;
+    _availableGrabberCount = static_cast<int>(_devicesInfo.size());
+    if (_availableGrabberCount == 0) {
+        _errorStaus = 1;
+        return false;
+    }
+    return true;
+}
 
-                            // 显示信息
-                            std::cout << "\n\n开始非流式录制\n\n" << std::endl;
-                            std::cout << "实时帧率：" << _SteadyFrameRate << "\n视频帧率：" << CONFIG.getFrameRate() << std::endl;
+bool SaperaUse::_ValidateRuntimeConfig(std::string& error) const {
+    if (CONFIG.getRecordMode() != 1 && CONFIG.getRecordMode() != 2) {
+        error = "RecordMode must be 1 or 2.";
+        return false;
+    }
+    if (CONFIG.getFrameRate() <= 0) {
+        error = "FrameRate must be positive.";
+        return false;
+    }
+    if (CONFIG.getRecordMode() == 1) {
+        if (CONFIG.getBufferCount() <= 0) {
+            error = "BufferCount must be positive in streaming mode.";
+            return false;
+        }
+        return true;
+    }
 
-                            // 开始录制
-                            _KeyToBufferRecord(Buffers, Xfer, recBeginBufferIdx); 
+    if (CONFIG.getRecordFrame() <= 0) {
+        error = "RecordFrame must be positive.";
+        return false;
+    }
+    if (CONFIG.getBufferOverflow() < 1) {
+        error = "BufferOverflow must be at least 1.";
+        return false;
+    }
+    if (CONFIG.getTriigerMode() != 0 && CONFIG.getTriigerMode() != 1) {
+        error = "Only keyboard and TTL trigger modes are implemented.";
+        return false;
+    }
 
-                        } else if (triggerMode == 1 && !_isTriggerToRecording) { // TTL触发
-                            if (Xfer->IsGrabbing()) {
-                               Xfer->Freeze();
-                            };
-                            if (!Xfer->Wait(5000)) {
-                                printf("Grab could not stop properly.\n");
-                            }
-                            // 设置触发
-                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_ENABLE, CORACQ_VAL_EXT_TRIGGER_ON,1);
-                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_DETECTION, CORACQ_VAL_RISING_EDGE, 1);
-                            Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_LEVEL, CORACQ_VAL_LEVEL_TTL, 1);
-                            // Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_SOURCE, CORACQ_VAL_FRAME_COUNT_1, 1);
-							Acq->SetParameter(CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT, CONFIG.getRecordFrame()+CONFIG.getBufferOverflow(), 1);
+    const std::int64_t skipCount = CONFIG.getTriigerMode() == 1 ? 1 : 0;
+    const std::int64_t bufferCount = static_cast<std::int64_t>(CONFIG.getRecordFrame()) +
+        CONFIG.getBufferOverflow() + skipCount;
+    if (bufferCount > std::numeric_limits<int>::max()) {
+        error = "Requested buffer count exceeds the supported integer range.";
+        return false;
+    }
+    return true;
+}
 
-                            Xfer->Grab(); // 开始采集
+bool SaperaUse::CreateDevice(int grabberIndex, int deviceIndex, const char* configFilePath) {
+    Shutdown();
 
-                            _isTriggerToRecording = true;
-                            std::cout << "\n\n开始非流式录制\n\n" << std::endl;
-                            std::cout << "视频帧率：" << CONFIG.getFrameRate() << std::endl;
+    std::string error;
+    if (!_ValidateRuntimeConfig(error)) {
+        std::cerr << "Invalid configuration: " << error << std::endl;
+        return false;
+    }
+    if (grabberIndex < 0 || grabberIndex >= static_cast<int>(_devicesInfo.size())) {
+        std::cerr << "GrabberIndex is out of range: " << grabberIndex << std::endl;
+        return false;
+    }
 
-                        }
-                        
-                        break;
-                    }
-                case 's': case 'S':
-                    if (CONFIG.getRecordMode() == 1) { // 流式录制
-                        Pro->keyControler = 3; // 停止录制
-                        break;
-                    }
+    const auto& deviceInfo = _devicesInfo.at(grabberIndex);
+    const std::string& grabberName = std::get<0>(deviceInfo);
+    const auto& deviceNames = std::get<1>(deviceInfo);
+    if (deviceIndex < 0 || deviceIndex >= static_cast<int>(deviceNames.size())) {
+        std::cerr << "CameraIndex is out of range: " << deviceIndex << std::endl;
+        return false;
+    }
+    if (configFilePath == nullptr || configFilePath[0] == '\0' ||
+        !std::filesystem::exists(std::filesystem::path(configFilePath))) {
+        std::cerr << "Grabber configuration file does not exist: "
+                  << (configFilePath == nullptr ? "<null>" : configFilePath) << std::endl;
+        return false;
+    }
+    if (!ValidateCcfStructure(configFilePath, error)) {
+        std::cerr << "Invalid grabber configuration file: " << error << std::endl;
+        return false;
+    }
 
-                    break;
-                default:
-                    break;
+    auto session = std::make_unique<CameraSession>();
+    const SapLocation location(grabberName.c_str(), deviceIndex);
+    session->acquisition.Reset(std::make_unique<SapAcquisition>(location, configFilePath));
+    if (!session->acquisition->Create()) {
+        _errorStaus = 2;
+        std::cerr << "Failed to create SapAcquisition." << std::endl;
+        return false;
+    }
+
+    session->buffers.Reset(std::make_unique<SapBufferWithTrash>(2, session->acquisition.Get()));
+    int bufferCount = CONFIG.getBufferCount();
+    if (CONFIG.getRecordMode() == 2) {
+        const int skipCount = CONFIG.getTriigerMode() == 1 ? 1 : 0;
+        bufferCount = CONFIG.getRecordFrame() + CONFIG.getBufferOverflow() + skipCount;
+        std::cout << "Estimated recording duration (s): "
+                  << static_cast<double>(CONFIG.getRecordFrame()) / CONFIG.getFrameRate()
+                  << std::endl;
+    }
+    if (!session->buffers->SetCount(bufferCount) || !session->buffers->Create()) {
+        _errorStaus = 3;
+        std::cerr << "Failed to create " << bufferCount << " Sapera buffers." << std::endl;
+        return false;
+    }
+
+    if (!FrameLayout::FromSapBuffer(*session->buffers, session->frameLayout, error)) {
+        std::cerr << "Unsupported camera buffer: " << error << std::endl;
+        return false;
+    }
+
+    session->processor = std::make_unique<RealtimeView>(
+        session->buffers.Get(),
+        session->frameLayout,
+        nullptr,
+        nullptr);
+    if (!session->processor->Create()) {
+        _errorStaus = 6;
+        std::cerr << "Failed to create RealtimeView." << std::endl;
+        return false;
+    }
+
+    session->transfer.Reset(std::make_unique<SapAcqToBuf>(
+        session->acquisition.Get(),
+        session->buffers.Get(),
+        XferCallback,
+        session.get()));
+    SapXferPair* pair = session->transfer->GetPair(0);
+    if (pair == nullptr || !pair->SetTrashCallbackInfo(XferCallback, session.get())) {
+        _errorStaus = 4;
+        std::cerr << "Failed to register the Sapera trash callback." << std::endl;
+        return false;
+    }
+    if (!session->transfer->Create()) {
+        _errorStaus = 4;
+        std::cerr << "Failed to create SapTransfer." << std::endl;
+        return false;
+    }
+
+    session->tracker.Reset(session->buffers->GetCount(), session->buffers->GetIndex());
+    std::cout << "Selected grabber: " << grabberName
+              << ", device: " << deviceNames.at(deviceIndex) << std::endl;
+    std::cout << "Buffer layout: " << session->frameLayout.width << 'x'
+              << session->frameLayout.height << ", Mono8, pitch="
+              << session->frameLayout.pitch << ", buffers="
+              << session->buffers->GetCount() << std::endl;
+
+    _session = std::move(session);
+    CameraSession& active = *_session;
+    if (!active.transfer->Grab()) {
+        std::cerr << "Failed to start continuous acquisition." << std::endl;
+        Shutdown();
+        return false;
+    }
+
+    SapXferFrameRateInfo* frameRateInfo = active.transfer->GetFrameRateStatistics();
+    bool quit = false;
+    while (!quit) {
+        _FrameRateDisp(frameRateInfo);
+
+        if (_isTriggerToRecording) {
+            if (!_TriggerToBufferRecord(active)) {
+                std::string stopError;
+                _StopTransfer(active, stopError);
+                active.acquisition->SetParameter(
+                    CORACQ_PRM_EXT_TRIGGER_ENABLE,
+                    CORACQ_VAL_EXT_TRIGGER_OFF,
+                    TRUE);
+                if (!active.transfer->Grab()) {
+                    std::cerr << "Failed to resume free-running acquisition." << std::endl;
+                    quit = true;
+                }
+                _isTriggerToRecording = false;
+                std::cout << "TTL recording stopped." << std::endl;
             }
-            
+            continue;
         }
 
-        if (isQuit) {
+        if (_kbhit() == 0) {
+            continue;
+        }
+
+        const char key = static_cast<char>(_getch());
+        switch (key) {
+        case 'q': case 'Q':
+            quit = true;
+            break;
+        case 'g': case 'G':
+            if (!active.transfer->IsGrabbing() && active.transfer->Grab()) {
+                std::cout << "Acquisition started." << std::endl;
+            }
+            break;
+        case 'p': case 'P':
+            if (active.transfer->IsGrabbing()) {
+                std::string stopError;
+                if (_StopTransfer(active, stopError)) {
+                    std::cout << "Acquisition paused." << std::endl;
+                }
+                else {
+                    std::cerr << stopError << std::endl;
+                }
+            }
+            break;
+        case 'i': case 'I':
+            active.processor->keyControler = 1;
+            break;
+        case 'r': case 'R':
+            if (CONFIG.getRecordMode() == 1) {
+                active.processor->keyControler = 2;
+            }
+            else if (CONFIG.getTriigerMode() == 0) {
+                if (!active.transfer->IsGrabbing()) {
+                    std::cerr << "Start acquisition before recording." << std::endl;
+                }
+                else if (!_KeyToBufferRecord(active)) {
+                    std::cerr << "Keyboard-triggered recording failed." << std::endl;
+                }
+            }
+            else {
+                _isTriggerToRecording = true;
+            }
+            break;
+        case 's': case 'S':
+            if (CONFIG.getRecordMode() == 1) {
+                active.processor->keyControler = 3;
+            }
+            break;
+        default:
             break;
         }
-        // Sleep(1); 
-        
     }
-    
-    Xfer->Freeze();
 
-    if (!Xfer->Wait(5000)) {
-        printf("Grab could not stop properly.\n");
-    }
-    //unregister the acquisition callback
-    Acq->UnregisterCallback();
-
-    // Destroy view object
-    if (!View->Destroy()) { return false; }
-    if (Xfer && *Xfer && !Xfer->Destroy()) { return false; }
-    if (!Buffers->Destroy()) { return false; }
-    if (!Acq->Destroy()) { return false; }
-    
+    return Shutdown();
 }
 
-void SaperaUse::XferCallback(SapXferCallbackInfo* pInfo)
-{
-    // 获取sapProcess对象
-    RealtimeView* mPro = (RealtimeView*)pInfo->GetContext();
+void SaperaUse::XferCallback(SapXferCallbackInfo* info) {
+    if (info == nullptr) {
+        return;
+    }
+    auto* session = static_cast<CameraSession*>(info->GetContext());
+    if (session == nullptr || !session->buffers || !session->processor) {
+        return;
+    }
 
-    if (mPro->IsRecording() && CONFIG.getExecuteNext()) {
-        mPro->ExecuteNext();
+    if (info->IsTrash()) {
+        session->tracker.OnTrashFrame(info->GetEventCount());
+        return;
+    }
+
+    session->tracker.OnFrame(session->buffers->GetIndex(), info->GetEventCount());
+    if (session->processor->IsRecording() && CONFIG.getExecuteNext()) {
+        session->processor->ExecuteNext();
     }
     else {
-        mPro->Execute();
+        session->processor->Execute();
     }
-    
-    
 }
 
-void SaperaUse::ProCallback(SapProCallbackInfo* pInfo)
-{
-    //SapView* mView = (SapView*)pInfo->GetContext();
-
-    // 刷新视图
-    //mView->Show();
-    //this->Execute();
-    /*
-    RealtimeView* mPro = (RealtimeView*)pInfo->GetContext();
-
-    if (mPro->IsRecording()) {
-        mPro->ExecuteNext();
+float SaperaUse::_FrameRateDisp(SapXferFrameRateInfo* frameRateInfo) {
+    if (frameRateInfo == nullptr || !frameRateInfo->IsLiveFrameRateAvailable() ||
+        frameRateInfo->IsLiveFrameRateStalled()) {
+        return _SteadyFrameRate;
     }
-    else {
-        mPro->Execute();
+
+    const float currentFrameRate = CONFIG.getIsRoundFramerate()
+        ? std::round(frameRateInfo->GetLiveFrameRate())
+        : frameRateInfo->GetLiveFrameRate();
+    if (currentFrameRate != _SteadyFrameRate) {
+        std::cout << "Live frame rate: " << currentFrameRate << std::endl;
+        _SteadyFrameRate = currentFrameRate;
     }
-    */
+    return currentFrameRate;
 }
 
+bool SaperaUse::_StopTransfer(CameraSession& session, std::string& error) const {
+    if (!session.transfer || !static_cast<bool>(*session.transfer) ||
+        !session.transfer->IsGrabbing()) {
+        error.clear();
+        return true;
+    }
 
-/* PRIVATE */
-
-float SaperaUse::_FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo) {
-    float thisframeRate;
-    if (FrameRateInfo->IsLiveFrameRateAvailable()) {
-        if (!FrameRateInfo->IsLiveFrameRateStalled()) {
-            if (CONFIG.getIsRoundFramerate()) { // 帧率四舍五入
-                thisframeRate = round(FrameRateInfo->GetLiveFrameRate());
-            }
-            else {
-                thisframeRate = FrameRateInfo->GetLiveFrameRate();
-            }
-
-            if (thisframeRate != _SteadyFrameRate) {
-                std::cout << "实时帧率：" << thisframeRate << std::endl;
-                _SteadyFrameRate = thisframeRate; // 更新稳定帧率
-            }
-            return thisframeRate;
+    if (!session.transfer->Freeze()) {
+        error = "SapTransfer::Freeze failed.";
+        session.transfer->Abort();
+        session.transfer->Wait(5000);
+        return false;
+    }
+    if (!session.transfer->Wait(5000)) {
+        session.transfer->Abort();
+        if (!session.transfer->Wait(5000)) {
+            error = "SapTransfer did not stop after Freeze and Abort.";
+            return false;
         }
     }
-    return _SteadyFrameRate;
+    error.clear();
+    return true;
 }
 
-void SaperaUse::_KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfer, int beginBufferIdx) {
-	// 实例化录制器
-    RecordFromBuffer* bufferRecorder = new RecordFromBuffer(mBuffer);
-
-    int totalFrame = CONFIG.getRecordFrame();  // 总帧数
-    int bufferCount = mBuffer->GetCount() - 1; // 最后一个缓冲区索引
-
-    // 帧计数器
-    int frameCounter = 0;
-    int thisIdx;
-    int lastIdx = beginBufferIdx;
-    while (frameCounter <= totalFrame) {
-        thisIdx = mBuffer->GetIndex();
-        if (thisIdx >= lastIdx) {
-            frameCounter += thisIdx - lastIdx;
-        }
-        else {
-            frameCounter += (bufferCount - lastIdx) + thisIdx;
-        }
-        lastIdx = thisIdx;
-        // std::cout << frameCounter << std::endl;
-    }
-    // 监控 buffer 满时暂停捕获
-    Xfer->Freeze();
-    if (!Xfer->Wait(5000)) {
-        printf("Grab could not stop properly.\n");
-    }
-    _isKeyToRecording = false;
-    std::cout << "结束录制，暂停捕获" << std::endl;
-
-    // 构建idx数组，传入给录制器
-    std::vector<int> bufferIdx(totalFrame);
-    bufferIdx[0] = beginBufferIdx;
-    for (int m = 1; m < totalFrame; m++) {
-        if (bufferIdx[m - 1] == bufferCount) {
-            bufferIdx[m] = 0;
-        }
-        else {
-            bufferIdx[m] = bufferIdx[m - 1] + 1;
-        }
+bool SaperaUse::_KeyToBufferRecord(CameraSession& session) {
+    std::string error;
+    const int frameCount = CONFIG.getRecordFrame();
+    if (!session.tracker.Arm(static_cast<std::size_t>(frameCount), 0, error)) {
+        std::cerr << "Could not arm keyboard capture: " << error << std::endl;
+        return false;
     }
 
-    // 将buffer中的帧写入到视频
-    std::stringstream ss;
-    // 获取当前时间
-    std::time_t t = std::time(0);
-    struct tm now;
-    localtime_s(&now, &t);
-
-    ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
-    std::string filePath = ss.str();
-
-    try {
-        if (!CONFIG.getSaveAsFrameSequence()) { // 保存为视频
-            std::cout << "正在保存视频..." << std::endl;
-            bufferRecorder->SaveVideo(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(),
-                mBuffer->GetWidth(), mBuffer->GetHeight(), false, bufferIdx);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            std::cout << "视频已保存至: " << filePath << std::endl;
-
-        }
-        else { // 保存为帧序列
-            std::cout << "正在保存视频帧..." << std::endl;
-
-            std::string fileFolder = filePath.erase(filePath.length() - 4, 4);
-
-            if (CreateDirectory(fileFolder.c_str(), NULL)) {
-                fileFolder.append("\\\\");
-            }
-            else {
-                std::cerr << "创建文件夹失败: " << GetLastError() << std::endl;
-            }
-
-            bufferRecorder->SaveFrames(fileFolder, bufferIdx);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            std::cout << "视频帧已保存至: " << fileFolder << std::endl;
-        }
-        Xfer->Grab();
-    }
-    catch (const std::exception& e) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        std::cerr << "保存失败: " << e.what() << std::endl;
-        Xfer->Grab();
+    std::cout << "Buffered recording started." << std::endl;
+    const CaptureWindow window = session.tracker.WaitForCompletion(
+        CaptureTimeout(frameCount, CONFIG.getFrameRate()));
+    const bool stopped = _StopTransfer(session, error);
+    if (!stopped) {
+        std::cerr << error << std::endl;
     }
 
+    bool saved = false;
+    if (stopped && window.status == CaptureWindowStatus::Complete) {
+        saved = _SaveCaptureWindow(session, window);
+    }
+    else if (window.status != CaptureWindowStatus::Complete) {
+        std::cerr << "Capture failed [" << CaptureWindowStatusName(window.status)
+                  << "]: " << window.message << std::endl;
+    }
+
+    if (!session.transfer->Grab()) {
+        std::cerr << "Failed to resume acquisition after buffered recording." << std::endl;
+        return false;
+    }
+    return saved;
 }
 
+bool SaperaUse::_TriggerToBufferRecord(CameraSession& session) {
+    std::string error;
+    if (!_StopTransfer(session, error)) {
+        std::cerr << error << std::endl;
+        return false;
+    }
 
-bool SaperaUse::_TriggerToBufferRecord(SapBufferWithTrash* mBuffer) {
-    int beginBufferIdx = mBuffer->GetIndex(); // 获取当前缓冲区索引
-    int totalFrame = CONFIG.getRecordFrame();  // 总帧数
-    int bufferCount = mBuffer->GetCount() - 1; // 最后一个缓冲区索引
-    
-    // 等待触发
-    std::cout << "\n等待Trigger\n（按's'键退出）" << std::endl;
-    while (beginBufferIdx == mBuffer->GetIndex()) {
-        // std::cout << mBuffer->GetIndex() << std::endl;
+    const int frameCount = CONFIG.getRecordFrame();
+    const int triggerFrameCount = frameCount + 1 + CONFIG.getBufferOverflow();
+    if (!session.acquisition->SetParameter(
+            CORACQ_PRM_EXT_TRIGGER_ENABLE,
+            CORACQ_VAL_EXT_TRIGGER_ON,
+            TRUE) ||
+        !session.acquisition->SetParameter(
+            CORACQ_PRM_EXT_TRIGGER_DETECTION,
+            CORACQ_VAL_RISING_EDGE,
+            TRUE) ||
+        !session.acquisition->SetParameter(
+            CORACQ_PRM_EXT_TRIGGER_LEVEL,
+            CORACQ_VAL_LEVEL_TTL,
+            TRUE) ||
+        !session.acquisition->SetParameter(
+            CORACQ_PRM_EXT_TRIGGER_FRAME_COUNT,
+            triggerFrameCount,
+            TRUE)) {
+        std::cerr << "Failed to configure TTL trigger parameters." << std::endl;
+        return false;
+    }
+
+    if (!session.tracker.Arm(static_cast<std::size_t>(frameCount), 1, error)) {
+        std::cerr << "Could not arm TTL capture: " << error << std::endl;
+        return false;
+    }
+    if (!session.transfer->Grab()) {
+        session.tracker.Cancel("SapTransfer::Grab failed.");
+        return false;
+    }
+
+    std::cout << "Waiting for TTL trigger (press S to cancel)." << std::endl;
+    while (!session.tracker.WaitForFirstEvent(std::chrono::milliseconds(50))) {
+        const CaptureWindow snapshot = session.tracker.Snapshot();
+        if (snapshot.status != CaptureWindowStatus::Armed) {
+            break;
+        }
         if (_kbhit() != 0) {
-            char k = _getch();
-            if (k == 's' || k == 'S') {
-
+            const char key = static_cast<char>(_getch());
+            if (key == 's' || key == 'S') {
+                session.tracker.Cancel("TTL capture was cancelled by the user.");
+                _StopTransfer(session, error);
                 return false;
             }
         }
     }
-    std::cout << "\n开始录制\n\n" << std::endl;
 
-	beginBufferIdx = beginBufferIdx + 1; // 跳过触发帧
-    // 帧计数器
-    int frameCounter = 0;
-    int thisIdx;
-    int lastIdx = beginBufferIdx;
-    while (frameCounter <= totalFrame) {
-        thisIdx = mBuffer->GetIndex();
-        if (thisIdx >= lastIdx) {
-            frameCounter += thisIdx - lastIdx;
-        }
-        else {
-            frameCounter += (bufferCount - lastIdx) + thisIdx;
-        }
-        lastIdx = thisIdx;
-        // std::cout << mBuffer->GetIndex() << std::endl;
+    std::cout << "TTL trigger received; recording started." << std::endl;
+    const CaptureWindow window = session.tracker.WaitForCompletion(
+        CaptureTimeout(frameCount + 1, CONFIG.getFrameRate()));
+    const bool stopped = _StopTransfer(session, error);
+    if (!stopped) {
+        std::cerr << error << std::endl;
+        return false;
+    }
+    if (window.status != CaptureWindowStatus::Complete) {
+        std::cerr << "TTL capture failed [" << CaptureWindowStatusName(window.status)
+                  << "]: " << window.message << std::endl;
+        return false;
+    }
+    return _SaveCaptureWindow(session, window);
+}
+
+bool SaperaUse::_SaveCaptureWindow(CameraSession& session, const CaptureWindow& window) {
+    std::string error;
+    if (!IsCaptureWindowIntact(
+            window,
+            session.tracker.TotalNormalFrames(),
+            session.buffers->GetCount(),
+            error)) {
+        std::cerr << "Capture window is not safe to save: " << error << std::endl;
+        return false;
     }
 
-    // 监控 buffer 满时暂停捕获
-    std::cout << "结束录制" << std::endl;
-
-    //// 录制
-    // 实例化录制器
-    RecordFromBuffer* bufferRecorder = new RecordFromBuffer(mBuffer);
-
-    // 构建idx数组，传入给录制器
-    std::vector<int> bufferIdx(totalFrame);
-    bufferIdx[0] = beginBufferIdx;
-    for (int m = 1; m < totalFrame; m++) {
-        if (bufferIdx[m - 1] == bufferCount) {
-            bufferIdx[m] = 0;
-        }
-        else {
-            bufferIdx[m] = bufferIdx[m - 1] + 1;
-        }
+    std::vector<int> indices;
+    if (!BuildCircularIndices(
+            window.firstIndex,
+            window.frameCount,
+            session.buffers->GetCount(),
+            indices,
+            error)) {
+        std::cerr << "Could not build capture indices: " << error << std::endl;
+        return false;
     }
 
-    // 将buffer中的帧写入到视频
-    std::stringstream ss;
-    // 获取当前时间
-    std::time_t t = std::time(0);
-    struct tm now;
-    localtime_s(&now, &t);
-
-    ss << CONFIG.getSavePath() << CONFIG.getVideoPrefix() << std::put_time(&now, "%Y%m%dT%H%M%S") << CONFIG.getVideoExt();
-    std::string filePath = ss.str();
-
+    const std::string outputPath = BuildOutputPath();
+    RecordFromBuffer recorder(*session.buffers, session.frameLayout);
     try {
-        if (!CONFIG.getSaveAsFrameSequence()) { // 保存为视频
-            std::cout << "正在保存视频..." << std::endl;
-            bufferRecorder->SaveVideo(filePath, GetEncoder(CONFIG.getEncoder()), CONFIG.getFrameRate(),
-                mBuffer->GetWidth(), mBuffer->GetHeight(), false, bufferIdx);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            std::cout << "视频已保存至: " << filePath << std::endl;
-
-        }
-        else { // 保存为帧序列
-            std::cout << "正在保存视频帧..." << std::endl;
-
-            std::string fileFolder = filePath.erase(filePath.length() - 4, 4);
-
-            if (CreateDirectory(fileFolder.c_str(), NULL)) {
-                fileFolder.append("\\\\");
+        if (!CONFIG.getSaveAsFrameSequence()) {
+            std::cout << "Saving video..." << std::endl;
+            if (!recorder.SaveVideo(
+                    outputPath,
+                    GetEncoder(CONFIG.getEncoder()),
+                    CONFIG.getFrameRate(),
+                    session.frameLayout.width,
+                    session.frameLayout.height,
+                    false,
+                    indices)) {
+                std::cerr << "Video save failed: " << outputPath << std::endl;
+                return false;
             }
-            else {
-                std::cerr << "创建文件夹失败: " << GetLastError() << std::endl;
-            }
-
-            bufferRecorder->SaveFrames(fileFolder, bufferIdx);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            std::cout << "视频帧已保存至: " << fileFolder << std::endl;
-
+            std::cout << "Video saved to: " << outputPath << std::endl;
+            return true;
         }
 
+        std::filesystem::path folder(outputPath);
+        folder.replace_extension();
+        std::error_code fileError;
+        std::filesystem::create_directories(folder, fileError);
+        if (fileError) {
+            std::cerr << "Could not create frame folder: " << fileError.message() << std::endl;
+            return false;
+        }
+        if (!recorder.SaveFrames(folder.string(), indices)) {
+            std::cerr << "Frame sequence save failed: " << folder.string() << std::endl;
+            return false;
+        }
+        std::cout << "Frames saved to: " << folder.string() << std::endl;
         return true;
     }
-    catch (const std::exception& e) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        std::cerr << "保存失败: " << e.what() << std::endl;
+    catch (const std::exception& exception) {
+        std::cerr << "Capture save failed: " << exception.what() << std::endl;
         return false;
     }
 }

@@ -4,35 +4,12 @@
 #define _SAPERAUSE_H_
 
 #include <SapClassBasic.h>
-#include "conio.h"
-#include "RealtimeView.h"
-#include "RecordFromBuffer.h"
+#include "CaptureWindow.h"
 
-#include <windows.h>
-#include <iostream>
-#include <vector>
+#include <memory>
 #include <string>
-#include <sstream>
-#include <unordered_map>
-#include <cmath>
-
-
-#include "config.h"
-
-struct CameraObj {
-    std::string grabberName;
-    std::string deviceName;
-    std::string cameraName;
-
-    std::unique_ptr<SapAcquisition> Acq;
-    std::unique_ptr<SapAcqDevice> AcqDevice;
-    std::unique_ptr<SapBufferWithTrash> Buffers;
-    std::unique_ptr<SapTransfer> AcqToBuf;
-    std::unique_ptr<SapTransfer> AcqDeviceToBuf;
-    std::unique_ptr<SapTransfer> Xfer;
-    std::unique_ptr<SapView> View;
-
-};
+#include <tuple>
+#include <vector>
 
 class SaperaUse
 {
@@ -40,40 +17,35 @@ public:
     SaperaUse();
     ~SaperaUse();
 
-    bool GrabbersInit();  // ³õÊ¼»¯²É¼¯¿¨
+    bool GrabbersInit();  // åˆå§‹åŒ–é‡‡é›†å¡
 
-    bool CreateDevice(int grabberIndex, int deviceIndex, const char* configFilePath);  // ³õÊ¼»¯Ïà»ú
+    bool CreateDevice(int grabberIndex, int deviceIndex, const char* configFilePath);  // åˆå§‹åŒ–ç›¸æœº
 
-    //bool ReleaseDevice(); // ÊÍ·ÅÏà»ú
+    bool Shutdown() noexcept;
 
     // callback
     static void XferCallback(SapXferCallbackInfo* pInfo);  //transfer call back
 
-    static void ProCallback(SapProCallbackInfo* pInfo);  //process call back
-
-
 private:
+    struct CameraSession;
 
-    int _errorStaus = -1;  // ´íÎó×´Ì¬ -1: no error
+    int _errorStaus = -1;  // é”™è¯¯çŠ¶æ€ -1: no error
 
     /* GrabbersInit */
-    int _availableGrabberCount = 0; // ¿ÉÓÃµÄ²É¼¯¿¨Êı
-    std::vector<std::tuple<std::string, std::vector<std::string>>> _devicesInfo;  // ±£´æ¿ÉÓÃ²É¼¯¿¨ºÍ¿ÉÓÃÉè±¸Ãû:1¼¶£º²É¼¯¿¨Ãû³Æ;2¼¶£ºÉè±¸Ãû³Æ
-    
-	float _FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo);  // ÏÔÊ¾ÊµÊ±Ö¡ÂÊ
-	float _SteadyFrameRate;  // ÎÈ¶¨Ö¡ÂÊ
+    int _availableGrabberCount = 0; // å¯ç”¨çš„é‡‡é›†å¡æ•°
+    std::vector<std::tuple<std::string, std::vector<std::string>>> _devicesInfo;  // ä¿å­˜å¯ç”¨é‡‡é›†å¡å’Œå¯ç”¨è®¾å¤‡å:1çº§ï¼šé‡‡é›†å¡åç§°;2çº§ï¼šè®¾å¤‡åç§°
 
-    CameraObj _cameraA;
+	float _FrameRateDisp(SapXferFrameRateInfo* FrameRateInfo);  // æ˜¾ç¤ºå®æ—¶å¸§ç‡
+	float _SteadyFrameRate = 0.0f;  // ç¨³å®šå¸§ç‡
 
-	void _KeyToBufferRecord(SapBufferWithTrash* mBuffer, SapTransfer* Xfer, int beginBufferIdx);  // ¼üÅÌ´¥·¢·ÇÁ÷Ê½Â¼ÖÆ
-    bool _TriggerToBufferRecord(SapBufferWithTrash* mBuffer);  // trigger´¥·¢·ÇÁ÷Ê½Â¼ÖÆ
+    bool _ValidateRuntimeConfig(std::string& error) const;
+    bool _StopTransfer(CameraSession& session, std::string& error) const;
+    bool _KeyToBufferRecord(CameraSession& session);
+    bool _TriggerToBufferRecord(CameraSession& session);
+    bool _SaveCaptureWindow(CameraSession& session, const CaptureWindow& window);
 
-    bool _isKeyToRecording = false; // ¼à¿Ø·ÇÁ÷Ê½Â¼ÖÆ
-    bool _isTriggerToRecording = false; // ¼à¿Ø·ÇÁ÷Ê½triggerÂ¼ÖÆ
-    // void
-    // void _DestroyCameraObj();
-
-
+    std::unique_ptr<CameraSession> _session;
+    bool _isTriggerToRecording = false; // ç›‘æ§éæµå¼triggerå½•åˆ¶
 };
 
 #endif

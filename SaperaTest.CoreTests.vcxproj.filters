@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{D770F0B4-29C1-470B-81C2-1EE24968920B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{50232215-CB79-490F-B7C7-A18633222A08}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="CaptureWindow.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="FrameBuffer.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="tests\CoreTests.cpp"><Filter>Source Files</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="CaptureWindow.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="FrameBuffer.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="SaperaResource.h"><Filter>Header Files</Filter></ClInclude>
+  </ItemGroup>
+</Project>

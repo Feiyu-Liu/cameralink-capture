@@ -10,6 +10,7 @@
 #include <opencv2/highgui.hpp>
 
 #include "config.h"
+#include "FrameBuffer.h"
 
 /* codec list */
 
@@ -19,7 +20,7 @@
 class RecordFromBuffer
 {
 public:
-	RecordFromBuffer(SapBufferWithTrash* pBuffers);
+	RecordFromBuffer(SapBufferWithTrash& buffers, const FrameLayout& layout);
 	virtual ~RecordFromBuffer();
 
 
@@ -30,7 +31,8 @@ public:
 
 private:
 	cv::VideoWriter _videoWriter;
-	SapBufferWithTrash *_pBuffers = NULL;
+	SapBufferWithTrash& _buffers;
+	FrameLayout _frameLayout;
 
 	bool _InitVideoWriter(const std::string& filename, int codec, double fps, const cv::Size& frameSize, bool isColor);
 	bool _WriteFrame(const cv::Mat& frame);

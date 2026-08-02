@@ -14,6 +14,7 @@
 #include <iostream>
 
 #include "config.h"
+#include "FrameBuffer.h"
 
 //#include "VideoRecorder.h"
 
@@ -22,21 +23,22 @@ using namespace cv;
 class RealtimeView : public SapProcessing
 {
 public:
-	RealtimeView(SapBuffer* pBuffers, SapProCallback pCallback, void* pContext);
+	RealtimeView(SapBuffer* pBuffers, const FrameLayout& layout, SapProCallback pCallback, void* pContext);
 	virtual ~RealtimeView();
+	bool Shutdown() noexcept;
 
 	bool IsRecording() const { return _isRecording; }
 
 	int keyControler = 0;
 	/*
-	0: ²»´¦Àí
-	1: ÏÔÊ¾bufferÍ¼ÏñÖĞµÄĞÅÏ¢
-	2£º¿ªÊ¼Â¼ÖÆ
-	3£º½áÊøÂ¼ÖÆ
+	0: ä¸å¤„ç†
+	1: æ˜¾ç¤ºbufferå›¾åƒä¸­çš„ä¿¡æ¯
+	2ï¼šå¼€å§‹å½•åˆ¶
+	3ï¼šç»“æŸå½•åˆ¶
 	*/
 
 protected:
-	virtual BOOL Run(); //ÔÚXferCallbackÖĞµ÷ÓÃExecute()ºóÖ´ĞĞ´Ëº¯Êı£¬Ö´ĞĞÍêºó×Ô¶¯µ÷ÓÃProCallback
+	virtual BOOL Run(); //åœ¨XferCallbackä¸­è°ƒç”¨Execute()åæ‰§è¡Œæ­¤å‡½æ•°ï¼Œæ‰§è¡Œå®Œåè‡ªåŠ¨è°ƒç”¨ProCallback
 
 private:
 
@@ -46,7 +48,7 @@ private:
 	cv::VideoWriter _videoWriter;
 	//AsyncVideoWriter _videoWriter;
 	bool _InitVideoWriter(const std::string& filename, int codec, double fps, const cv::Size& frameSize, bool isColor);
-	void _WriteFrame(const cv::Mat& frame);
+	bool _WriteFrame(const cv::Mat& frame);
 	void _ReleaseVideoWriter();
 
 	void _BufferInfoDisplay();
@@ -58,23 +60,22 @@ private:
 	// std::string _videoSavePath = "C:\\LiuFeiyu\\videos\\12-10test1.mp4";
 
 	//Mat _FocusPeaking(const Mat& image, double threshold, const Scalar& color);
-	
+
 
 	//opencv tool box
-    cv::Mat _FocusPeakingLayer(const cv::Mat& frame);  // ·åÖµ¶Ô½¹Í¼²ã
-    cv::Mat _HistLayer(const cv::Mat& frame);  // Ö±·½Í¼Í¼²ã
+    cv::Mat _FocusPeakingLayer(const cv::Mat& frame);  // å³°å€¼å¯¹ç„¦å›¾å±‚
+    cv::Mat _HistLayer(const cv::Mat& frame);  // ç›´æ–¹å›¾å›¾å±‚
 	cv::Mat _MotionDetectorLayer(bool& motionDetected,
-		const cv::Mat& lastFrame, 
-		const cv::Mat& currentFrame, 
-		bool isDelta, 
-		const int minSizeMovement);  // ÔË¶¯¼ì²âÍ¼²ã(ÉÏÒ»Ö¡¡¢µ±Ç°Ö¡¡¢ÊÇ·ñÏÔÊ¾²î·Ö»­Ãæ¡¢×îĞ¡¼ì²âÇøÓò)
-	cv::Mat _lastFrame;  // ÉÏÒ»Ö¡
+		const cv::Mat& lastFrame,
+		const cv::Mat& currentFrame,
+		bool isDelta,
+		const int minSizeMovement);  // è¿åŠ¨æ£€æµ‹å›¾å±‚(ä¸Šä¸€å¸§ã€å½“å‰å¸§ã€æ˜¯å¦æ˜¾ç¤ºå·®åˆ†ç”»é¢ã€æœ€å°æ£€æµ‹åŒºåŸŸ)
+	cv::Mat _lastFrame;  // ä¸Šä¸€å¸§
 
-	int _imageConter = 1; // Í¼Æ¬¼ÆÊıÆ÷
-	// int _bufferIdxConter = 0; // buffer¼ÆÊıÆ÷
-	int _imageWidth;
-	int _imageHeight;
-	
+	int _imageConter = 1; // å›¾ç‰‡è®¡æ•°å™¨
+	// int _bufferIdxConter = 0; // bufferè®¡æ•°å™¨
+	FrameLayout _frameLayout;
+
 };
 
 
